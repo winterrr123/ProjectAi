@@ -563,7 +563,12 @@ function addFeedItem(item) {
       <span class="label" style="margin-left: 6px;">${item.class_name}</span>
       <span style="font-size:0.76rem; color:var(--mint); font-weight:700; margin-left:6px;">#ID:${item.tracking_id} ✓ ĐÃ ĐẾM</span>
     </div>
-    <span class="conf" style="color:${color};">${confPercent}%</span>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <button class="btn-gemini-inspect" onclick="inspectVideoTrack(${item.tracking_id})" title="Soi chi tiết với Gemini AI">
+        ✨ Gemini
+      </button>
+      <span class="conf" style="color:${color};">${confPercent}%</span>
+    </div>
   `;
 
   // Prepend to list
@@ -976,8 +981,12 @@ if (loadSampleCoffeeBtn) {
   });
 }
 
-// Topbar dynamic scroll effect
+// Topbar dynamic scroll effect & VisionHub Init
 document.addEventListener('DOMContentLoaded', () => {
+  if (window.VisionHub) {
+    window.VisionHub.init('visionHubMount');
+  }
+
   const topbar = document.querySelector('.topbar');
   if (topbar) {
     const handleScroll = () => {
@@ -991,3 +1000,33 @@ document.addEventListener('DOMContentLoaded', () => {
     handleScroll();
   }
 });
+
+// Gemini Inspection for Video Studio item
+window.inspectVideoTrack = function (trackId) {
+  const track = studioState.activeTracks.get(trackId);
+  if (!studioCanvas) {
+    if (window.VisionHub) window.VisionHub.triggerFullSceneInspection();
+    return;
+  }
+
+  const cropCanvas = document.createElement('canvas');
+  const cropCtx = cropCanvas.getContext('2d');
+  const pad = 12;
+
+  let sx = 0, sy = 0, sw = studioCanvas.width, sh = studioCanvas.height;
+  if (track) {
+    sx = Math.max(0, track.currX1 - pad);
+    sy = Math.max(0, track.currY1 - pad);
+    sw = Math.min(studioCanvas.width - sx, Math.max(30, (track.currX2 - track.currX1) + pad * 2));
+    sh = Math.min(studioCanvas.height - sy, Math.max(30, (track.currY2 - track.currY1) + pad * 2));
+  }
+
+  cropCanvas.width = sw;
+  cropCanvas.height = sh;
+  cropCtx.drawImage(studioCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  const cropBase64 = cropCanvas.toDataURL('image/jpeg', 0.9);
+
+  if (window.VisionHub) {
+    window.VisionHub.inspectProductCrop(cropBase64);
+  }
+};

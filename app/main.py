@@ -13,6 +13,7 @@ import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.cors import CORSMiddleware
 
+from app.api.routes_vision import router as vision_router
 from app.config import settings
 from app.database.crud import DetectionCRUD, ProductCRUD, SessionCRUD
 from app.database.mysql import SessionLocal, init_db
@@ -52,6 +53,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(vision_router)
 
 app.mount("/static", StaticFiles(directory=str(settings.FRONTEND_DIR)), name="static")
 app.mount("/assets", StaticFiles(directory=str(settings.FRONTEND_DIR)), name="assets")

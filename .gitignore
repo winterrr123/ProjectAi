@@ -42,6 +42,10 @@ runs/
 *.png
 *.gif
 !frontend/**
+*.pt
+*.onnx
+*.engine
+!models/best.pt
 
 # ==============================================================================
 # Python & Virtual Environments

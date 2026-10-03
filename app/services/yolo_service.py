@@ -143,7 +143,19 @@ class YOLOService:
         frame_h, frame_w = frame.shape[:2]
         frame_area = frame_h * frame_w
 
-        if self.model is None:
+        # Check active vision engine from VisionManager
+        try:
+            from app.services.vision_api_service import vision_manager
+            if vision_manager.active_engine == "yolo_world" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
+                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
+                return self.suppress_overlapping_boxes(world_dets)
+            elif vision_manager.active_engine == "hybrid" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
+                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
+                detections.extend(world_dets)
+        except Exception as e:
+            logger.debug("Vision engine dispatch note: %s", e)
+
+        if self.model is None and not detections:
             return detections
 
         try:

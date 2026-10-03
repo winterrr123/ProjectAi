@@ -22,6 +22,13 @@ class Settings:
     OUTPUT_FOLDER = BASE_DIR / os.getenv("OUTPUT_FOLDER", "outputs")
     MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", "524288000"))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    VISION_ENGINE = os.getenv("VISION_ENGINE", "standard")  # 'standard', 'yolo_world', 'hybrid'
+    YOLO_WORLD_CLASSES = os.getenv(
+        "YOLO_WORLD_CLASSES",
+        "gói cà phê, chai nước, hộp sữa, lon nước ngọt, bánh kẹo, gói snack, điện thoại, máy tính, sách vở, balo, túi xách, thùng hộp"
+    )
 
     def __post_init__(self):
         self.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)

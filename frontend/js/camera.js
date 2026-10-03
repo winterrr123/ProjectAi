@@ -406,7 +406,12 @@ function updateSidebarUI() {
                 <div class="title">${t.class_name}</div>
                 <div class="sub">TRACK_ID: #${t.tracking_id}</div>
               </div>
-              <span class="confidence-chip">${Math.round(t.confidence * 100)}%</span>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button class="btn-gemini-inspect" onclick="inspectTrackGemini(${t.tracking_id})" title="Soi chi tiết với Gemini Vision AI">
+                  ✨ Gemini
+                </button>
+                <span class="confidence-chip">${Math.round(t.confidence * 100)}%</span>
+              </div>
             </div>
           `;
         })
@@ -659,8 +664,12 @@ stopCameraBtn.addEventListener('click', stopCamera);
 if (resetCountBtn) resetCountBtn.addEventListener('click', resetAllCounts);
 snapshotBtn.addEventListener('click', captureSnapshot);
 
-// Topbar dynamic scroll effect
+// Topbar dynamic scroll effect & VisionHub Init
 document.addEventListener('DOMContentLoaded', () => {
+  if (window.VisionHub) {
+    window.VisionHub.init('visionHubMount');
+  }
+
   const topbar = document.querySelector('.topbar');
   if (topbar) {
     const handleScroll = () => {
@@ -674,3 +683,33 @@ document.addEventListener('DOMContentLoaded', () => {
     handleScroll();
   }
 });
+
+// Gemini Inspection for specific tracked item
+window.inspectTrackGemini = function (trackId) {
+  const track = cameraTracks.get(trackId);
+  if (!canvas) {
+    if (window.VisionHub) window.VisionHub.triggerFullSceneInspection();
+    return;
+  }
+
+  const cropCanvas = document.createElement('canvas');
+  const cropCtx = cropCanvas.getContext('2d');
+  const pad = 12;
+
+  let sx = 0, sy = 0, sw = canvas.width, sh = canvas.height;
+  if (track) {
+    sx = Math.max(0, track.currX1 - pad);
+    sy = Math.max(0, track.currY1 - pad);
+    sw = Math.min(canvas.width - sx, Math.max(30, (track.currX2 - track.currX1) + pad * 2));
+    sh = Math.min(canvas.height - sy, Math.max(30, (track.currY2 - track.currY1) + pad * 2));
+  }
+
+  cropCanvas.width = sw;
+  cropCanvas.height = sh;
+  cropCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  const cropBase64 = cropCanvas.toDataURL('image/jpeg', 0.9);
+
+  if (window.VisionHub) {
+    window.VisionHub.inspectProductCrop(cropBase64);
+  }
+};
