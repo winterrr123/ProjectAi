@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Đếm Sản Phẩm Qua Video - Product Vision</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=3.0" />
+  </head>
+  <body>
+    <!-- Hardware-Accelerated 3D Computer Vision Animation Canvas -->
+    <canvas id="bg3dCanvas" class="bg-3d-canvas" aria-hidden="true"></canvas>
+
+    <div class="container">
+      <!-- Modern Navigation Topbar -->
+      <header class="topbar">
+        <a href="/" class="brand-wrapper">
+          <div class="brand-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+          </div>
+          <div class="brand-title">
+            <h1>Product Vision</h1>
+            <span>Video Analytics Studio</span>
+          </div>
+        </a>
+
+        <nav class="nav-actions">
+          <a href="/" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            Tổng quan
+          </a>
+          <a href="/upload" class="nav-link active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Đếm qua Video
+          </a>
+          <a href="/camera" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+            Live Camera
+          </a>
+          <a href="/statistics" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line>
+            </svg>
+            Thống kê
+          </a>
+          <a href="/history" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            Lịch sử
+          </a>
+        </nav>
+      </header>
+
+      <!-- Panel Upload Video & Studio -->
+      <main class="panel" style="margin-bottom: 24px;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="23 7 16 12 23 17 23 7"></polygon>
+              <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+            <span>Video Studio - Nhận Diện & Đếm Sản Phẩm</span>
+          </div>
+          <span class="panel-title-badge">
+            <span class="live-dot" style="display:inline-block; width:6px; height:6px; margin-right:4px;"></span>
+            Sẵn sàng xử lý
+          </span>
+        </div>
+
+        <!-- 1. Dropzone Chọn/Kéo Thả Video -->
+        <div class="dropzone" id="dropZone">
+          <input type="file" id="videoUpload" accept="video/mp4,video/avi,video/mov,video/webm,video/mkv" />
+          <div class="dropzone-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+          </div>
+          <div class="dropzone-title">Kéo và thả file video vào đây, hoặc nhấn để duyệt</div>
+          <div class="dropzone-sub">
+            Hỗ trợ định dạng MP4, WebM, AVI, MOV. Sau khi tải video, bạn có thể xem trực tiếp quá trình phân tích và đếm từng món hàng.
+          </div>
+
+          <!-- Video Mẫu Test Nhanh -->
+          <div class="samples-bar" onclick="event.stopPropagation();">
+            <span style="font-size: 0.78rem; color: var(--text-muted);">Video mẫu thử nghiệm:</span>
+            <button type="button" class="sample-chip" id="loadSampleCoffee">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>Băng chuyền cà phê (6444194)</span>
+            </button>
+            <button type="button" class="sample-chip" id="loadSample1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>sample_test.mp4</span>
+            </button>
+            <button type="button" class="sample-chip" id="loadSample2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>debug_sample.mp4</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Thông tin file đã chọn -->
+        <div id="fileInfoRow" style="display: none; align-items: center; justify-content: space-between; margin-top: 16px; padding: 12px 18px; background: #ffffff; border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xs);">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2">
+              <polygon points="23 7 16 12 23 17 23 7"></polygon>
+              <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+            <div>
+              <strong id="loadedFileName" style="color: var(--text-primary); font-size: 0.92rem; font-weight: 700;">sample.mp4</strong>
+              <span id="loadedFileSize" style="color: var(--text-muted); font-size: 0.8rem; margin-left: 8px;">(0 MB)</span>
+            </div>
+          </div>
+          <button id="changeFileBtn" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">
+            Đổi Video Khác
+          </button>
+        </div>
+
+        <!-- 2. Video Studio Layout -->
+        <div id="videoStudio" class="studio-layout" style="display: none;">
+          <!-- Khung Phát Video & Canvas -->
+          <div class="studio-main-card">
+            <div class="video-player-viewport" id="playerViewport">
+              <!-- Video HTML5 -->
+              <video id="studioVideo" playsinline preload="auto"></video>
+              
+              <!-- Canvas vẽ Bounding Boxes và Tracking ID -->
+              <canvas id="studioCanvas"></canvas>
+
+              <!-- Computer Vision Viewport Brackets -->
+              <span class="cv-corner top-left"></span>
+              <span class="cv-corner top-right"></span>
+              <span class="cv-corner bottom-left"></span>
+              <span class="cv-corner bottom-right"></span>
+
+              <!-- Laser scan element placeholder (hidden via CSS) -->
+              <div class="laser-scanline" id="laserLine" style="display:none;"></div>
+
+              <!-- HUD Overlay (Minimalist & Clean) -->
+              <div class="video-hud-overlay">
+                <div class="hud-top-bar">
+                  <div class="hud-pill highlight">
+                    <span class="live-dot" style="width:6px; height:6px;"></span>
+                    <span>AI DETECTION ACTIVE</span>
+                  </div>
+                  <div class="hud-pill">
+                    FPS: <span id="studioFps" style="font-weight:600;">--</span> &nbsp;|&nbsp; 
+                    Độ trễ: <span id="studioLatency" style="color:var(--success); font-weight:600;">--</span>ms
+                  </div>
+                </div>
+
+                <div class="hud-bottom-bar">
+                  <div class="hud-pill">
+                    Chế độ: <span style="font-weight:600; color:#93c5fd;">REALTIME AI</span>
+                  </div>
+                  <div class="hud-pill">
+                    Trong khung hình: <strong id="activeInFrameCount" style="color:#60a5fa; margin-left:4px;">0</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Thanh điều khiển Video Studio -->
+            <div class="studio-control-bar">
+              <!-- Timeline trượt -->
+              <div class="timeline-row">
+                <input type="range" id="timelineSlider" class="timeline-slider" min="0" max="100" value="0" step="0.1" />
+                <span class="time-stamp" id="timeDisplay">00:00 / 00:00</span>
+              </div>
+
+              <!-- Nút điều khiển -->
+              <div class="control-actions-row">
+                <div class="btn-group">
+                  <button id="playPauseBtn" class="btn btn-primary" title="Phát / Tạm dừng">
+                    <svg id="playIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <span id="playBtnText">Bắt Đầu Đếm</span>
+                  </button>
+
+                  <button id="restartBtn" class="btn btn-secondary" title="Đếm lại từ đầu">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="1 4 1 10 7 10"></polyline>
+                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                    </svg>
+                    <span>Làm mới</span>
+                  </button>
+
+                  <button id="snapshotBtn" class="btn btn-secondary" title="Chụp ảnh khung hình">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                      <circle cx="12" cy="13" r="4"></circle>
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="btn-group">
+                  <label style="font-size: 0.82rem; color: var(--text-secondary); display:flex; align-items:center; gap:6px;">
+                    Tốc độ:
+                    <select id="playbackSpeed" class="speed-select">
+                      <option value="0.5">0.5x</option>
+                      <option value="0.75" selected>0.75x (Mượt & Chuẩn Xác)</option>
+                      <option value="1">1.0x (Chuẩn)</option>
+                      <option value="1.25">1.25x</option>
+                      <option value="1.5">1.5x</option>
+                      <option value="2">2.0x</option>
+                    </select>
+                  </label>
+
+                  <label style="font-size: 0.82rem; color: var(--text-secondary); display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="checkbox" id="toggleBoxes" checked style="accent-color:var(--primary);" />
+                    <span>Khung nhận diện</span>
+                  </label>
+
+                  <!-- Hidden laser checkbox to maintain JS compatibility -->
+                  <label style="display:none;">
+                    <input type="checkbox" id="toggleLaser" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bảng Metrics & Live Counters bên phải -->
+          <div class="studio-sidebar">
+            <!-- Thẻ Tổng Số Lượng Sản Phẩm -->
+            <div class="hero-counter-card">
+              <div class="counter-title-wrap">
+                <span class="counter-label">Tổng Đã Đếm</span>
+                <span class="live-badge">Thời gian thực</span>
+              </div>
+              <div class="counter-number-big" id="totalCountDisplay">0</div>
+              <div class="counter-sub">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span>Thuật toán theo dõi định danh độc nhất</span>
+              </div>
+            </div>
+
+            <!-- Thẻ Phân Loại Chi Tiết Sản Phẩm -->
+            <div class="category-breakdown-card">
+              <div class="category-breakdown-header">
+                <h4 style="font-size: 0.94rem; font-weight: 700; color: var(--text-primary);">Phân Loại Chi Tiết</h4>
+                <span class="panel-title-badge" id="categoryCountBadge">0 Loại</span>
+              </div>
+              <div class="category-list" id="categoryList">
+                <div style="color: var(--text-muted); font-size: 0.84rem; text-align: center; padding: 20px 0;">
+                  Bấm "Bắt Đầu Đếm" để xem phân loại...
+                </div>
+              </div>
+            </div>
+
+            <!-- Thẻ Nhật Ký Sự Kiện Phát Hiện Thời Gian Thực -->
+            <div class="live-feed-card">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h4 style="font-size: 0.92rem; font-weight: 700; color: var(--text-primary);">Nhật Ký Đếm Mới</h4>
+                <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600; letter-spacing: 0.04em;">DÒNG HOẠT ĐỘNG</span>
+              </div>
+              <div class="feed-list" id="feedList">
+                <div style="color: var(--text-muted); font-size: 0.82rem; text-align: center; padding: 14px 0;">
+                  Chưa có sản phẩm mới được ghi nhận
+                </div>
+              </div>
+            </div>
+
+            <!-- Thao tác Lưu & Xuất Báo Cáo -->
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <button id="saveSessionBtn" class="btn btn-success wide">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                  <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                Lưu Kết Quả Vào CSDL
+              </button>
+
+              <button id="serverProcessBtn" class="btn btn-secondary wide">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                Xử Lý Server & Xuất MP4
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Khu vực Progress Bar cho Server Batch -->
+        <div id="batchProgressArea" style="display: none; margin-top: 24px; padding: 24px; background: #ffffff; border: 1px solid var(--border-default); border-radius: var(--radius-xl); box-shadow: var(--shadow-card);">
+          <div class="step-container">
+            <div class="step-item active" id="step1">
+              <div class="step-num">1</div>
+              <span>Video đã tải</span>
+            </div>
+            <div class="step-item" id="step2">
+              <div class="step-num">2</div>
+              <span>Upload Server</span>
+            </div>
+            <div class="step-item" id="step3">
+              <div class="step-num">3</div>
+              <span>Nhận diện YOLOv8</span>
+            </div>
+            <div class="step-item" id="step4">
+              <div class="step-num">4</div>
+              <span>Xuất Video MP4</span>
+            </div>
+          </div>
+
+          <div class="progress-track">
+            <div class="progress-fill" id="batchProgressBar"></div>
+          </div>
+          <div class="status-row">
+            <span id="batchStatusText">Đang khởi tạo xử lý video...</span>
+            <span id="batchPercentText" style="color:var(--primary); font-weight:700;">0%</span>
+          </div>
+
+          <div id="batchDownloadArea" style="display: none; justify-content: flex-end; gap: 10px; margin-top: 12px;">
+            <a id="downloadProcessedBtn" class="btn btn-primary" href="#" download>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Tải Video Kết Quả (.mp4)
+            </a>
+            <a href="/statistics" class="btn btn-secondary">Xem Biểu Đồ Thống Kê →</a>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="/static/js/background.js"></script>
+    <script src="/static/js/upload.js"></script>
+  </body>
+</html>

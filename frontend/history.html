@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lịch Sử Phiên Nhận Diện - Product Vision</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=3.0" />
+  </head>
+  <body>
+    <!-- Hardware-Accelerated 3D Computer Vision Animation Canvas -->
+    <canvas id="bg3dCanvas" class="bg-3d-canvas" aria-hidden="true"></canvas>
+
+    <div class="container">
+      <!-- Modern Navigation Bar -->
+      <header class="topbar">
+        <a href="/" class="brand-wrapper">
+          <div class="brand-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+          </div>
+          <div class="brand-title">
+            <h1>Product Vision</h1>
+            <span>Nhật Ký & Lịch Sử</span>
+          </div>
+        </a>
+
+        <nav class="nav-actions">
+          <a href="/" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            Tổng quan
+          </a>
+          <a href="/upload" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Đếm qua Video
+          </a>
+          <a href="/camera" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+            Live Camera
+          </a>
+          <a href="/statistics" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line>
+            </svg>
+            Thống kê
+          </a>
+          <a href="/history" class="nav-link active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            Lịch sử
+          </a>
+        </nav>
+      </header>
+
+      <main class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span>Nhật Ký & Lịch Sử Phiên Đếm</span>
+          </div>
+          <span class="panel-title-badge" id="historyCountBadge">0 phiên lưu trữ</span>
+        </div>
+
+        <!-- Filter & Search Toolbar -->
+        <div class="table-toolbar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="historySearchInput" placeholder="Tìm theo tên video hoặc mã phiên..." />
+          </div>
+
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-secondary" id="filterAllBtn" style="padding: 7px 14px; font-size: 0.82rem;">Tất cả</button>
+            <button class="btn btn-secondary" id="filterVideoBtn" style="padding: 7px 14px; font-size: 0.82rem;">Chỉ Video</button>
+            <button class="btn btn-secondary" id="filterCameraBtn" style="padding: 7px 14px; font-size: 0.82rem;">Chỉ Camera</button>
+            <button class="btn btn-primary" id="refreshHistoryBtn" style="padding: 7px 14px; font-size: 0.82rem;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              Làm mới
+            </button>
+          </div>
+        </div>
+
+        <!-- Responsive History Table -->
+        <div class="table-responsive">
+          <table class="modern-table">
+            <thead>
+              <tr>
+                <th>Mã Phiên</th>
+                <th>Phương Thức</th>
+                <th>Nguồn Dữ Liệu</th>
+                <th>Thời Gian Bắt Đầu</th>
+                <th>Thời Gian Kết Thúc</th>
+                <th>Tổng Số Lượng</th>
+              </tr>
+            </thead>
+            <tbody id="historyRows">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">
+                  Đang tải nhật ký lịch sử...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="/static/js/background.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+  </body>
+</html>
