@@ -127,9 +127,8 @@ def train_model(
     )
 
     # Kiểm tra file trọng số tốt nhất
-    weights_path = Path("runs/detect/train_products_pro/weights/best.pt")
+    weights_path = Path(results.save_dir) / "weights" / "best.pt"
     if not weights_path.exists():
-        # Fallback thử tìm file mới nhất trong runs/detect
         candidates = list(Path("runs/detect").glob("**/weights/best.pt"))
         if candidates:
             weights_path = max(candidates, key=os.path.getmtime)

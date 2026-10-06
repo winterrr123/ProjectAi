@@ -1,11 +1,13 @@
+import asyncio
 import base64
+import json
 import os
 import shutil
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import cv2
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -148,9 +150,22 @@ async def serve_video_file(filename: str):
 @app.post("/api/detect/frame")
 async def detect_frame(payload: FrameDetectionPayload):
     try:
+        is_camera = (payload.source == "camera")
+        target_service = camera_service if is_camera else video_service
+
         if payload.reset:
-            video_service.counter.reset()
-            video_service.tracker = ByteTrackService()
+            if hasattr(target_service, 'reset'):
+                target_service.reset()
+            else:
+                target_service.counter.reset()
+                if hasattr(target_service, 'yolo_service'):
+                    target_service.yolo_service.reset_tracker()
+                elif hasattr(target_service, 'model'):
+                    target_service.model.reset_tracker()
+                if hasattr(target_service, '_smooth_boxes'):
+                    target_service._smooth_boxes.clear()
+                if hasattr(target_service, 'tracker'):
+                    target_service.tracker = ByteTrackService()
 
         image_data = payload.image
         if not image_data:
@@ -169,7 +184,7 @@ async def detect_frame(payload: FrameDetectionPayload):
         if frame is None:
             raise HTTPException(status_code=400, detail="Invalid image frame data")
 
-        result = video_service.process_frame(frame, frame_number=payload.frame_number)
+        result = target_service.process_frame(frame, frame_number=payload.frame_number)
         return {
             "success": True,
             "detections": result.get("detections", []),
@@ -184,11 +199,86 @@ async def detect_frame(payload: FrameDetectionPayload):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.post("/api/camera/detect-frame")
+async def camera_detect_frame(payload: FrameDetectionPayload):
+    payload.source = "camera"
+    return await detect_frame(payload)
+
+
 @app.post("/api/detect/reset")
 async def detect_reset():
-    video_service.counter.reset()
-    video_service.tracker = ByteTrackService()
+    # Reset video service (uses YOLO built-in tracker)
+    video_service.reset()
+    # Reset camera service
+    camera_service.reset()
     return {"success": True, "message": "Tracker and counter reset"}
+
+
+@app.websocket("/ws/detect")
+async def ws_detect(websocket: WebSocket):
+    """
+    High-performance WebSocket endpoint for real-time frame detection.
+    Eliminates HTTP round-trip latency and TCP handshake overhead.
+    """
+    await websocket.accept()
+    source = "video"
+    frame_number = 0
+    try:
+        while True:
+            message = await websocket.receive()
+            if "text" in message:
+                try:
+                    data = json.loads(message["text"])
+                except Exception:
+                    continue
+
+                msg_type = data.get("type", "frame")
+                source = data.get("source", source)
+                target_service = camera_service if source == "camera" else video_service
+
+                if msg_type == "reset" or data.get("reset"):
+                    target_service.reset()
+                    await websocket.send_json({"success": True, "type": "reset_ack"})
+                    continue
+
+                image_data = data.get("image", "")
+                if not image_data:
+                    continue
+
+                if "," in image_data:
+                    image_data = image_data.split(",", 1)[1]
+
+                try:
+                    np_arr = np.frombuffer(base64.b64decode(image_data), np.uint8)
+                    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                except Exception:
+                    continue
+
+                frame_number = data.get("frame_number", frame_number + 1)
+            elif "bytes" in message:
+                raw_bytes = message["bytes"]
+                np_arr = np.frombuffer(raw_bytes, np.uint8)
+                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                frame_number += 1
+                target_service = camera_service if source == "camera" else video_service
+            else:
+                continue
+
+            if frame is None:
+                continue
+
+            result = target_service.process_frame(frame, frame_number=frame_number)
+            await websocket.send_json({
+                "success": True,
+                "detections": result.get("detections", []),
+                "counts": result.get("counts", {}),
+                "total": result.get("total", 0),
+                "frame_number": frame_number,
+            })
+    except WebSocketDisconnect:
+        logger.info("WebSocket detection client disconnected")
+    except Exception as exc:
+        logger.warning("WebSocket handler note: %s", exc)
 
 
 @app.post("/api/video/save-session")
@@ -227,7 +317,7 @@ async def process_video(payload: DetectionRequest):
             raise HTTPException(status_code=404, detail="Upload not found")
 
         output_path = str(settings.OUTPUT_FOLDER / f"processed_{session.id}_{os.path.basename(video_name)}")
-        result = video_service.process_video(str(settings.UPLOAD_FOLDER / video_name), output_path)
+        result = await asyncio.to_thread(video_service.process_video, str(settings.UPLOAD_FOLDER / video_name), output_path)
         output_filename = os.path.basename(result.get("output_video") or output_path)
 
         DetectionCRUD.save_detection_results(
@@ -271,6 +361,11 @@ async def process_video(payload: DetectionRequest):
     finally:
         if db is not None:
             db.close()
+
+
+@app.get("/api/video/process/progress")
+async def get_video_process_progress():
+    return getattr(video_service, "progress", {"percent": 0, "status": "idle", "message": ""})
 
 
 @app.post("/api/camera/start")

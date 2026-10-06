@@ -33,7 +33,7 @@ def calculate_center_distance(box1: tuple, box2: tuple) -> float:
 
 
 class ByteTrackService:
-    def __init__(self, max_lost_age: int = 60):
+    def __init__(self, max_lost_age: int = 15):
         # Store active tracks: tracking_id -> TrackedObject (Global spatial tracking)
         self.track_store: Dict[int, TrackedObject] = {}
         # Track last seen frame number to purge aged tracks
@@ -43,6 +43,15 @@ class ByteTrackService:
         self.track_class_votes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self.max_lost_age = max_lost_age
         self.next_global_id = 1
+
+        # Smoothed box positions for stable bounding boxes (Kalman-like EMA)
+        # tracking_id -> (smooth_x1, smooth_y1, smooth_x2, smooth_y2)
+        self._smooth_boxes: Dict[int, tuple] = {}
+        # Velocity estimate per track for motion prediction
+        # tracking_id -> (vx_center, vy_center) in pixels/frame
+        self._velocity: Dict[int, tuple] = {}
+        # Previous center positions for velocity estimation
+        self._prev_center: Dict[int, tuple] = {}
 
     def update_tracks(self, detections: List[dict], frame_number: int, timestamp: float) -> List[dict]:
         # Step 0: Deduplicate incoming proposals in this frame (highest confidence / coffee first)
@@ -66,7 +75,7 @@ class ByteTrackService:
         tracked: List[dict] = []
         matched_track_ids = set()
 
-        # Step 1: Assign or match each detection against active tracks spatially
+        # Step 1: Build cost matrix and do greedy matching (IoU-based, with velocity-predicted position)
         for detection in accepted_detections:
             curr_box = (
                 float(detection["x1"]),
@@ -87,16 +96,37 @@ class ByteTrackService:
                 for cand_id, cand_obj in self.track_store.items():
                     if cand_id in matched_track_ids:
                         continue
+
+                    # Use velocity-predicted position for matching if available
                     cand_box = (cand_obj.x1, cand_obj.y1, cand_obj.x2, cand_obj.y2)
-                    iou = calculate_iou(curr_box, cand_box)
-                    dist = calculate_center_distance(curr_box, cand_box)
+                    frames_since = frame_number - self.last_seen.get(cand_id, frame_number)
+                    if cand_id in self._velocity and frames_since > 0:
+                        vx, vy = self._velocity[cand_id]
+                        pred_cx = (cand_box[0] + cand_box[2]) / 2.0 + vx * frames_since
+                        pred_cy = (cand_box[1] + cand_box[3]) / 2.0 + vy * frames_since
+                        half_w = (cand_box[2] - cand_box[0]) / 2.0
+                        half_h = (cand_box[3] - cand_box[1]) / 2.0
+                        predicted_box = (pred_cx - half_w, pred_cy - half_h, pred_cx + half_w, pred_cy + half_h)
+                    else:
+                        predicted_box = cand_box
+
+                    iou = calculate_iou(curr_box, predicted_box)
+                    dist = calculate_center_distance(curr_box, predicted_box)
+
+                    # Also check IoU against raw (non-predicted) position
+                    iou_raw = calculate_iou(curr_box, cand_box)
+                    dist_raw = calculate_center_distance(curr_box, cand_box)
+
+                    # Use the better match (predicted vs raw)
+                    best_iou = max(iou, iou_raw)
+                    best_dist = min(dist, dist_raw)
 
                     # Same class bonus: slightly prefer same class if multiple items are clustered
-                    same_class_bonus = 0.15 if cand_obj.class_name == raw_cls_name else 0.0
+                    same_class_bonus = 0.10 if cand_obj.class_name == raw_cls_name else 0.0
 
-                    # Match condition: IoU >= 0.15 OR centers are close (<= 95px)
-                    if iou >= 0.15 or dist <= 95.0:
-                        score = iou + max(0.0, 1.0 - (dist / 120.0)) + same_class_bonus
+                    # Tighter matching: IoU >= 0.25 OR centers within 60px
+                    if best_iou >= 0.25 or best_dist <= 60.0:
+                        score = best_iou + max(0.0, 1.0 - (best_dist / 80.0)) + same_class_bonus
                         if score > best_score:
                             best_score = score
                             best_match_id = cand_id
@@ -123,6 +153,23 @@ class ByteTrackService:
                 self.next_global_id = max(self.next_global_id, tracking_id + 1)
 
             matched_track_ids.add(tracking_id)
+
+            # Update velocity estimate (center displacement per frame)
+            curr_cx = (curr_box[0] + curr_box[2]) / 2.0
+            curr_cy = (curr_box[1] + curr_box[3]) / 2.0
+            if tracking_id in self._prev_center:
+                prev_cx, prev_cy = self._prev_center[tracking_id]
+                frames_elapsed = max(1, frame_number - self.last_seen.get(tracking_id, frame_number - 1))
+                raw_vx = (curr_cx - prev_cx) / frames_elapsed
+                raw_vy = (curr_cy - prev_cy) / frames_elapsed
+                # EMA smoothing on velocity
+                if tracking_id in self._velocity:
+                    old_vx, old_vy = self._velocity[tracking_id]
+                    self._velocity[tracking_id] = (old_vx * 0.5 + raw_vx * 0.5, old_vy * 0.5 + raw_vy * 0.5)
+                else:
+                    self._velocity[tracking_id] = (raw_vx, raw_vy)
+            self._prev_center[tracking_id] = (curr_cx, curr_cy)
+
             self.last_seen[tracking_id] = frame_number
             self.last_timestamp[tracking_id] = timestamp
 
@@ -130,30 +177,42 @@ class ByteTrackService:
             self.track_class_votes[tracking_id][raw_cls_name] += 1
             stable_cls_name = max(self.track_class_votes[tracking_id].items(), key=lambda x: x[1])[0]
 
+            # Apply EMA smoothing to box coordinates for stable bounding boxes
+            smooth_alpha = 0.45  # Higher = more responsive, lower = smoother
+            if tracking_id in self._smooth_boxes:
+                sx1, sy1, sx2, sy2 = self._smooth_boxes[tracking_id]
+                smooth_x1 = sx1 + smooth_alpha * (curr_box[0] - sx1)
+                smooth_y1 = sy1 + smooth_alpha * (curr_box[1] - sy1)
+                smooth_x2 = sx2 + smooth_alpha * (curr_box[2] - sx2)
+                smooth_y2 = sy2 + smooth_alpha * (curr_box[3] - sy2)
+            else:
+                smooth_x1, smooth_y1, smooth_x2, smooth_y2 = curr_box
+            self._smooth_boxes[tracking_id] = (smooth_x1, smooth_y1, smooth_x2, smooth_y2)
+
             tracked_item = {
                 "tracking_id": tracking_id,
                 "class_id": detection["class_id"],
                 "class_name": stable_cls_name,
                 "confidence": detection["confidence"],
-                "x1": curr_box[0],
-                "y1": curr_box[1],
-                "x2": curr_box[2],
-                "y2": curr_box[3],
+                "x1": smooth_x1,
+                "y1": smooth_y1,
+                "x2": smooth_x2,
+                "y2": smooth_y2,
                 "frame_number": frame_number,
                 "timestamp": timestamp,
             }
             tracked.append(tracked_item)
 
-            # Update track store
+            # Update track store with smoothed coordinates
             self.track_store[tracking_id] = TrackedObject(
                 tracking_id=tracking_id,
                 class_id=detection["class_id"],
                 class_name=stable_cls_name,
                 confidence=detection["confidence"],
-                x1=curr_box[0],
-                y1=curr_box[1],
-                x2=curr_box[2],
-                y2=curr_box[3],
+                x1=smooth_x1,
+                y1=smooth_y1,
+                x2=smooth_x2,
+                y2=smooth_y2,
                 frame_number=frame_number,
                 timestamp=timestamp,
             )
@@ -164,6 +223,9 @@ class ByteTrackService:
                 del self.track_store[tid]
                 self.last_seen.pop(tid, None)
                 self.last_timestamp.pop(tid, None)
+                self._smooth_boxes.pop(tid, None)
+                self._velocity.pop(tid, None)
+                self._prev_center.pop(tid, None)
 
         # Step 3: Merge duplicate overlapping tracks in store (guarantee at most 1 track per physical item)
         store_keys = list(self.track_store.keys())
@@ -183,6 +245,9 @@ class ByteTrackService:
                     del self.track_store[id2]
                     self.last_seen.pop(id2, None)
                     self.last_timestamp.pop(id2, None)
+                    self._smooth_boxes.pop(id2, None)
+                    self._velocity.pop(id2, None)
+                    self._prev_center.pop(id2, None)
 
         # Step 4: Prune any merged IDs from returned tracked detections
         final_tracked = [item for item in tracked if item["tracking_id"] in self.track_store and item["tracking_id"] not in merged_ids]
@@ -200,3 +265,7 @@ class ByteTrackService:
         self.last_timestamp.clear()
         self.track_class_votes.clear()
         self.next_global_id = 1
+        self._smooth_boxes.clear()
+        self._velocity.clear()
+        self._prev_center.clear()
+

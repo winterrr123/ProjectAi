@@ -288,11 +288,20 @@ restartBtn.addEventListener('click', () => {
 });
 
 // Timeline seeking
+let lastTimelinePos = 0;
 timelineSlider.addEventListener('input', () => {
-  studioVideo.currentTime = parseFloat(timelineSlider.value);
+  const targetTime = parseFloat(timelineSlider.value);
+  const diff = targetTime - (studioVideo.currentTime || 0);
+  studioVideo.currentTime = targetTime;
   updateTimeDisplay();
   studioState.activeTracks.clear();
   ctx.clearRect(0, 0, studioCanvas.width, studioCanvas.height);
+
+  // If user seeks backwards by more than 1.2s, reset counter state for accurate re-counting
+  if (diff < -1.2) {
+    resetStudioData();
+  }
+  lastTimelinePos = targetTime;
 });
 
 // Playback Speed
@@ -309,6 +318,50 @@ toggleLaser.addEventListener('change', () => {
   }
 });
 
+// ==========================================================================
+// High-Speed WebSocket Connection for Real-Time Inference
+// ==========================================================================
+let detectSocket = null;
+let isSocketConnected = false;
+let socketPendingResolve = null;
+
+function initDetectWebSocket() {
+  if (detectSocket && (detectSocket.readyState === WebSocket.OPEN || detectSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws/detect`;
+  try {
+    detectSocket = new WebSocket(wsUrl);
+    detectSocket.onopen = () => {
+      isSocketConnected = true;
+      console.log('⚡ WebSocket AI Detection connected');
+    };
+    detectSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (socketPendingResolve) {
+          const resolve = socketPendingResolve;
+          socketPendingResolve = null;
+          resolve(data);
+        }
+      } catch (err) {
+        console.warn('WS message parse error:', err);
+      }
+    };
+    detectSocket.onerror = () => {
+      isSocketConnected = false;
+    };
+    detectSocket.onclose = () => {
+      isSocketConnected = false;
+      setTimeout(initDetectWebSocket, 2000);
+    };
+  } catch (e) {
+    isSocketConnected = false;
+  }
+}
+initDetectWebSocket();
+
 // Reset Studio Data
 function resetStudioData() {
   studioState.totalCount = 0;
@@ -324,10 +377,17 @@ function resetStudioData() {
   feedList.innerHTML = '<div style="color: var(--text-muted); font-size: 0.82rem; text-align: center; padding: 14px 0;">Chưa có sự kiện nhận diện</div>';
   activeInFrameCount.textContent = '0';
   ctx.clearRect(0, 0, studioCanvas.width, studioCanvas.height);
+
+  // Notify backend to reset tracker
+  if (isSocketConnected && detectSocket && detectSocket.readyState === WebSocket.OPEN) {
+    detectSocket.send(JSON.stringify({ type: 'reset', source: 'video' }));
+  } else {
+    fetch('/api/detect/reset', { method: 'POST' }).catch(() => {});
+  }
 }
 
 // ==========================================================================
-// Frame Extraction & AI Detection Request
+// Frame Extraction & AI Detection Request (WebSocket Fast Path + HTTP Fallback)
 // ==========================================================================
 async function captureAndDetectFrame() {
   if (
@@ -370,29 +430,55 @@ async function captureAndDetectFrame() {
   const startReq = performance.now();
 
   try {
-    const res = await fetch('/api/detect/frame', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    let data = null;
+
+    // Fast path: WebSocket if connected
+    if (isSocketConnected && detectSocket && detectSocket.readyState === WebSocket.OPEN) {
+      const wsPromise = new Promise((resolve) => {
+        socketPendingResolve = resolve;
+        setTimeout(() => {
+          if (socketPendingResolve === resolve) {
+            socketPendingResolve = null;
+            resolve(null);
+          }
+        }, 1000);
+      });
+      detectSocket.send(JSON.stringify({
+        type: 'frame',
         image: base64Data,
         frame_number: studioState.frameCount,
         reset: false,
-      }),
-    });
+        source: 'video',
+      }));
+      data = await wsPromise;
+    }
+
+    // Fallback path: HTTP POST if WS was unavailable or timed out
+    if (!data) {
+      const res = await fetch('/api/detect/frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: base64Data,
+          frame_number: studioState.frameCount,
+          reset: false,
+          source: 'video',
+        }),
+      });
+      if (res.ok) {
+        data = await res.json();
+      }
+    }
 
     const endReq = performance.now();
     studioState.latency = Math.round(endReq - startReq);
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success) {
-        handleDetectionResults(data, w / targetW, h / targetH);
-      }
+    if (data && data.success) {
+      handleDetectionResults(data, w / targetW, h / targetH);
     }
   } catch (err) {
     console.debug('Frame infer error:', err);
   } finally {
-    // Immediately ready for next frame without artificial delay
     studioState.isProcessingFrame = false;
   }
 }
@@ -428,7 +514,8 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
     updateCategoryBreakdown(data.counts, newTotal);
   }
 
-  // Sync with activeTracks map for butter-smooth interpolation
+  // Mark all current tracks as "not seen this frame" to detect disappeared objects
+  const seenThisFrame = new Set();
   let hasNewProduct = false;
 
   rawDetections.forEach((det) => {
@@ -438,9 +525,12 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
     const x2 = det.x2 * scaleX;
     const y2 = det.y2 * scaleY;
 
-    const isCounted = det.is_counted || studioState.seenTrackIds.has(trackId);
+    // Only consider counted if server confirmed it (or already confirmed in this session)
+    const isCounted = Boolean(det.is_counted) || studioState.seenTrackIds.has(trackId);
+    seenThisFrame.add(trackId);
 
-    if (trackId !== 0 && !studioState.seenTrackIds.has(trackId)) {
+    // Only add to official counting feed when server confirms counting (det.is_counted === true)
+    if (trackId !== 0 && det.is_counted && !studioState.seenTrackIds.has(trackId)) {
       studioState.seenTrackIds.add(trackId);
       hasNewProduct = true;
       addFeedItem({
@@ -449,41 +539,16 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
       });
     }
 
-    // Check if this new detection spatially replaces an older track at the same spot
-    let initX1 = x1, initY1 = y1, initX2 = x2, initY2 = y2;
-    for (const [oldId, oldTrack] of studioState.activeTracks.entries()) {
-      if (oldId !== trackId) {
-        const cOx = (oldTrack.currX1 + oldTrack.currX2) / 2;
-        const cOy = (oldTrack.currY1 + oldTrack.currY2) / 2;
-        const cNx = (x1 + x2) / 2;
-        const cNy = (y1 + y2) / 2;
-        if (Math.hypot(cOx - cNx, cOy - cNy) < 70) {
-          initX1 = oldTrack.currX1;
-          initY1 = oldTrack.currY1;
-          initX2 = oldTrack.currX2;
-          initY2 = oldTrack.currY2;
-          studioState.activeTracks.delete(oldId);
-          break;
-        }
-      }
-    }
-
     if (studioState.activeTracks.has(trackId)) {
       const track = studioState.activeTracks.get(trackId);
-      const dt = Math.max(16, now - track.lastSeenTime);
-      
-      // Calculate instantaneous velocity (pixels per millisecond)
-      const nVx1 = (x1 - track.targetX1) / dt;
-      const nVy1 = (y1 - track.targetY1) / dt;
-      const nVx2 = (x2 - track.targetX2) / dt;
-      const nVy2 = (y2 - track.targetY2) / dt;
-
-      // Exponential moving average for velocity to avoid erratic jitter
-      track.vx1 = track.vx1 ? (track.vx1 * 0.35 + nVx1 * 0.65) : nVx1;
-      track.vy1 = track.vy1 ? (track.vy1 * 0.35 + nVy1 * 0.65) : nVy1;
-      track.vx2 = track.vx2 ? (track.vx2 * 0.35 + nVx2 * 0.65) : nVx2;
-      track.vy2 = track.vy2 ? (track.vy2 * 0.35 + nVy2 * 0.65) : nVy2;
-
+      // Large displacement check: snap directly to prevent dragging/flying box across screen
+      const jumpDist = Math.hypot(x1 - track.currX1, y1 - track.currY1);
+      if (jumpDist > 120) {
+        track.currX1 = x1;
+        track.currY1 = y1;
+        track.currX2 = x2;
+        track.currY2 = y2;
+      }
       track.targetX1 = x1;
       track.targetY1 = y1;
       track.targetX2 = x2;
@@ -493,23 +558,20 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
       track.isCounted = isCounted;
       track.lastSeenTime = now;
     } else {
+      // New track: snap directly to position
       studioState.activeTracks.set(trackId, {
         id: trackId,
         className: det.class_name,
         confidence: det.confidence,
         isCounted: isCounted,
-        currX1: initX1,
-        currY1: initY1,
-        currX2: initX2,
-        currY2: initY2,
+        currX1: x1,
+        currY1: y1,
+        currX2: x2,
+        currY2: y2,
         targetX1: x1,
         targetY1: y1,
         targetX2: x2,
         targetY2: y2,
-        vx1: 0,
-        vy1: 0,
-        vx2: 0,
-        vy2: 0,
         lastSeenTime: now,
       });
     }
@@ -551,8 +613,7 @@ function updateCategoryBreakdown(counts, total) {
 // Add Item to Activity Feed (Only for newly counted products)
 function addFeedItem(item) {
   const timeStr = formatSeconds(studioVideo.currentTime);
-  const color = getColorForClass(item.class_name);
-  const confPercent = Math.round((item.confidence || 0.9) * 100);
+  const color = '#10b981';
 
   const feedDiv = document.createElement('div');
   feedDiv.className = 'feed-item';
@@ -560,14 +621,11 @@ function addFeedItem(item) {
   feedDiv.innerHTML = `
     <div>
       <span class="time">[${timeStr}]</span>
-      <span class="label" style="margin-left: 6px;">${item.class_name}</span>
-      <span style="font-size:0.76rem; color:var(--mint); font-weight:700; margin-left:6px;">#ID:${item.tracking_id} ✓ ĐÃ ĐẾM</span>
+      <span class="label" style="margin-left: 6px; font-weight: 700;">Sản phẩm #${item.tracking_id}</span>
+      <span style="font-size:0.76rem; color:var(--mint); font-weight:700; margin-left:6px;">✓ ĐÃ ĐẾM</span>
     </div>
     <div style="display: flex; align-items: center; gap: 6px;">
-      <button class="btn-gemini-inspect" onclick="inspectVideoTrack(${item.tracking_id})" title="Soi chi tiết với Gemini AI">
-        ✨ Gemini
-      </button>
-      <span class="conf" style="color:${color};">${confPercent}%</span>
+      <span class="conf" style="color:var(--mint); font-weight:700; font-size: 0.8rem;">#ID:${item.tracking_id}</span>
     </div>
   `;
 
@@ -584,7 +642,7 @@ function addFeedItem(item) {
 }
 
 // ==========================================================================
-// 60fps Canvas Render Loop with Butter-Smooth Box Interpolation (Lerp)
+// 60fps Canvas Render Loop with Stable Box Interpolation
 // ==========================================================================
 function renderCanvasLoop() {
   studioState.animationId = requestAnimationFrame(renderCanvasLoop);
@@ -609,9 +667,35 @@ function renderCanvasLoop() {
   if (!toggleBoxes.checked) return;
 
   const now = performance.now();
-  const lerp = 0.28; // Butter-smooth box interpolation
 
-  // Pairwise deduplication of active tracks to strictly guarantee at most 1 box per physical object
+  // Clean up stale tracks first
+  for (const [trackId, track] of studioState.activeTracks.entries()) {
+    const age = now - track.lastSeenTime;
+
+    // 1. Immediately remove if box is completely outside canvas bounds (disappears on exit)
+    if (track.currX2 <= 0 || track.currX1 >= w || track.currY2 <= 0 || track.currY1 >= h) {
+      studioState.activeTracks.delete(trackId);
+      continue;
+    }
+
+    // 2. Near screen edges (exiting conveyor / camera)
+    const isNearEdge =
+      track.currX1 <= 15 ||
+      track.currY1 <= 15 ||
+      track.currX2 >= w - 15 ||
+      track.currY2 >= h - 15;
+
+    // Fast cleanup: 100ms when near edge, 280ms otherwise
+    const maxAge = isNearEdge ? 100 : 280;
+
+    if (age > maxAge) {
+      studioState.activeTracks.delete(trackId);
+      continue;
+    }
+  }
+
+  // Deduplicate overlapping tracks visually ONLY if true duplicate boxes (IoU > 0.65)
+  // (Prevents adjacent items on conveyor from deleting each other)
   const trackEntries = Array.from(studioState.activeTracks.entries());
   for (let i = 0; i < trackEntries.length; i++) {
     const [idA, trackA] = trackEntries[i];
@@ -620,78 +704,53 @@ function renderCanvasLoop() {
       const [idB, trackB] = trackEntries[j];
       if (!studioState.activeTracks.has(idB)) continue;
 
-      const cAx = (trackA.currX1 + trackA.currX2) / 2;
-      const cAy = (trackA.currY1 + trackA.currY2) / 2;
-      const cBx = (trackB.currX1 + trackB.currX2) / 2;
-      const cBy = (trackB.currY1 + trackB.currY2) / 2;
-      const dist = Math.hypot(cAx - cBx, cAy - cBy);
-
-      const interX1 = Math.max(trackA.currX1, trackB.currX1);
-      const interY1 = Math.max(trackA.currY1, trackB.currY1);
-      const interX2 = Math.min(trackA.currX2, trackB.currX2);
-      const interY2 = Math.min(trackA.currY2, trackB.currY2);
-      const interW = Math.max(0, interX2 - interX1);
-      const interH = Math.max(0, interY2 - interY1);
-      const interArea = interW * interH;
-      const areaA = Math.max(1, (trackA.currX2 - trackA.currX1) * (trackA.currY2 - trackA.currY1));
-      const areaB = Math.max(1, (trackB.currX2 - trackB.currX1) * (trackB.currY2 - trackB.currY1));
-      const minArea = Math.min(areaA, areaB);
-      const iou = interArea / (areaA + areaB - interArea);
-
-      if (dist < 60 || (interArea / minArea) > 0.4 || iou > 0.25) {
-        if (trackA.lastSeenTime < trackB.lastSeenTime) {
-          studioState.activeTracks.delete(idA);
-          break;
-        } else {
-          studioState.activeTracks.delete(idB);
+      const ix1 = Math.max(trackA.currX1, trackB.currX1);
+      const iy1 = Math.max(trackA.currY1, trackB.currY1);
+      const ix2 = Math.min(trackA.currX2, trackB.currX2);
+      const iy2 = Math.min(trackA.currY2, trackB.currY2);
+      const iw = Math.max(0, ix2 - ix1);
+      const ih = Math.max(0, iy2 - iy1);
+      const interArea = iw * ih;
+      if (interArea > 0) {
+        const areaA = Math.max(1, (trackA.currX2 - trackA.currX1) * (trackA.currY2 - trackA.currY1));
+        const areaB = Math.max(1, (trackB.currX2 - trackB.currX1) * (trackB.currY2 - trackB.currY1));
+        const iou = interArea / (areaA + areaB - interArea);
+        if (iou > 0.65) {
+          if (trackA.lastSeenTime < trackB.lastSeenTime) {
+            studioState.activeTracks.delete(idA);
+            break;
+          } else {
+            studioState.activeTracks.delete(idB);
+          }
         }
       }
     }
   }
 
+  // Render each active track
   studioState.activeTracks.forEach((track, trackId) => {
     const age = now - track.lastSeenTime;
     const isCounted = track.isCounted || studioState.seenTrackIds.has(trackId);
 
-    // Check if product has moved near or past screen edges
     const isNearEdge =
       track.currX1 <= 15 ||
       track.currY1 <= 15 ||
       track.currX2 >= w - 15 ||
       track.currY2 >= h - 15;
+    const maxAge = isNearEdge ? 100 : 280;
 
-    // Fast purge if near edge, otherwise max 450ms persistence to prevent ghost trail
-    const maxAge = isNearEdge ? 250 : 450;
-
-    if (age > maxAge) {
-      studioState.activeTracks.delete(trackId);
-      return;
-    }
-
-    // Fade out smoothly only during the final 150ms
+    // Fade out smoothly during the final 80ms
     let alpha = 1.0;
-    if (age > maxAge - 150) {
-      alpha = Math.max(0, (maxAge - age) / 150);
+    if (age > maxAge - 80) {
+      alpha = Math.max(0, (maxAge - age) / 80);
     }
 
-    // Deadband filter & forward motion extrapolation:
-    // Project forward along velocity vector between AI detection updates
-    const elapsed = Math.min(220, now - track.lastSeenTime);
-    const forwardX1 = track.targetX1 + (track.vx1 || 0) * elapsed * 0.75;
-    const forwardY1 = track.targetY1 + (track.vy1 || 0) * elapsed * 0.75;
-    const forwardX2 = track.targetX2 + (track.vx2 || 0) * elapsed * 0.75;
-    const forwardY2 = track.targetY2 + (track.vy2 || 0) * elapsed * 0.75;
-
-    const dx1 = forwardX1 - track.currX1;
-    const dy1 = forwardY1 - track.currY1;
-    const dx2 = forwardX2 - track.currX2;
-    const dy2 = forwardY2 - track.currY2;
-
-    const lerp = 0.32;
-    track.currX1 += Math.abs(dx1) < 1.0 ? 0 : dx1 * lerp;
-    track.currY1 += Math.abs(dy1) < 1.0 ? 0 : dy1 * lerp;
-    track.currX2 += Math.abs(dx2) < 1.0 ? 0 : dx2 * lerp;
-    track.currY2 += Math.abs(dy2) < 1.0 ? 0 : dy2 * lerp;
+    // Responsive lerp directly toward server-reported target
+    const lerpFactor = 0.65;
+    track.currX1 += (track.targetX1 - track.currX1) * lerpFactor;
+    track.currY1 += (track.targetY1 - track.currY1) * lerpFactor;
+    track.currX2 += (track.targetX2 - track.currX2) * lerpFactor;
+    track.currY2 += (track.targetY2 - track.currY2) * lerpFactor;
 
     const x1 = Math.max(0, track.currX1);
     const y1 = Math.max(0, track.currY1);
@@ -701,8 +760,7 @@ function renderCanvasLoop() {
     const bh = y2 - y1;
     if (bw <= 0 || bh <= 0) return;
 
-    const baseColor = getColorForClass(track.className);
-    const color = isCounted ? '#10b981' : baseColor;
+    const color = isCounted ? '#10b981' : '#3b82f6';
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -735,10 +793,9 @@ function renderCanvasLoop() {
     ctx.moveTo(x2 - cornerLen, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - cornerLen);
     ctx.stroke();
 
-    // Floating Label Tag with rounded pill geometry & clean badge
-    const conf = Math.round((track.confidence || 0.9) * 100);
+    // Floating Label Tag: Clean Precision Counting Display
     const statusText = isCounted ? '✓ ' : '';
-    const label = `${statusText}${track.className} #${trackId} · ${conf}%`;
+    const label = `${statusText}Sản phẩm #${trackId}`;
 
     ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
     const textMetrics = ctx.measureText(label);
@@ -864,7 +921,22 @@ serverProcessBtn.addEventListener('click', async () => {
   batchDownloadArea.style.display = 'none';
   batchProgressArea.scrollIntoView({ behavior: 'smooth' });
 
-  updateBatchStep(2, 30, 'Đang chuẩn bị mô hình YOLOv8 trên máy chủ...');
+  updateBatchStep(2, 10, 'Đang kết nối và khởi động mô hình AI trên máy chủ...');
+
+  // Thăm dò tiến độ xử lý từng frame theo thời gian thực từ server
+  let progressTimer = setInterval(async () => {
+    try {
+      const pRes = await fetch('/api/video/process/progress');
+      if (pRes.ok) {
+        const pData = await pRes.json();
+        if (pData.status === 'processing' && pData.percent) {
+          updateBatchStep(3, pData.percent, pData.message || `Đang nhận diện khung hình ${pData.current_frame}/${pData.total_frames}...`);
+        } else if (pData.status === 'completed') {
+          updateBatchStep(4, 100, pData.message || 'Xử lý hoàn tất! Đang hoàn tất video MP4...');
+        }
+      }
+    } catch (_) {}
+  }, 600);
 
   try {
     const res = await fetch('/api/video/process', {
@@ -881,7 +953,8 @@ serverProcessBtn.addEventListener('click', async () => {
       throw new Error(data.message || 'Xử lý video máy chủ thất bại');
     }
 
-    updateBatchStep(4, 100, 'Xử lý hoàn tất! Video đã được xuất thành công.');
+    clearInterval(progressTimer);
+    updateBatchStep(4, 100, 'Xử lý hoàn tất! Video MP4 đã được xuất thành công.');
     showToast('Xuất video nhận diện hoàn tất!', 'success');
 
     const outVideo = data.output_video || data.output_path || '';
@@ -894,9 +967,11 @@ serverProcessBtn.addEventListener('click', async () => {
       batchDownloadArea.style.display = 'flex';
     }
   } catch (err) {
+    clearInterval(progressTimer);
     updateBatchStep(1, 0, `Lỗi: ${err.message}`);
     showToast(`Lỗi xử lý server: ${err.message}`, 'error');
   } finally {
+    clearInterval(progressTimer);
     serverProcessBtn.disabled = false;
   }
 });

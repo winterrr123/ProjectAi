@@ -77,6 +77,50 @@ const camOffCtx = camOffCanvas.getContext('2d', { willReadFrequently: true });
 
 let isInferringCamera = false;
 
+// ==========================================================================
+// High-Speed WebSocket Connection for Real-Time Camera Inference
+// ==========================================================================
+let camSocket = null;
+let isCamSocketConnected = false;
+let camSocketPendingResolve = null;
+
+function initCameraWebSocket() {
+  if (camSocket && (camSocket.readyState === WebSocket.OPEN || camSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws/detect`;
+  try {
+    camSocket = new WebSocket(wsUrl);
+    camSocket.onopen = () => {
+      isCamSocketConnected = true;
+      console.log('⚡ Camera WebSocket AI Detection connected');
+    };
+    camSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (camSocketPendingResolve) {
+          const resolve = camSocketPendingResolve;
+          camSocketPendingResolve = null;
+          resolve(data);
+        }
+      } catch (err) {
+        console.warn('Camera WS message parse error:', err);
+      }
+    };
+    camSocket.onerror = () => {
+      isCamSocketConnected = false;
+    };
+    camSocket.onclose = () => {
+      isCamSocketConnected = false;
+      setTimeout(initCameraWebSocket, 2000);
+    };
+  } catch (e) {
+    isCamSocketConnected = false;
+  }
+}
+initCameraWebSocket();
+
 async function sendCameraFrameToAI() {
   if (!video || video.paused || video.ended || isInferringCamera) return;
   const vw = video.videoWidth;
@@ -108,17 +152,47 @@ async function sendCameraFrameToAI() {
   const base64 = camOffCanvas.toDataURL('image/jpeg', 0.60);
 
   try {
-    const res = await fetch('/api/detect/frame', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    let data = null;
+
+    // Fast path: WebSocket if connected
+    if (isCamSocketConnected && camSocket && camSocket.readyState === WebSocket.OPEN) {
+      const wsPromise = new Promise((resolve) => {
+        camSocketPendingResolve = resolve;
+        setTimeout(() => {
+          if (camSocketPendingResolve === resolve) {
+            camSocketPendingResolve = null;
+            resolve(null);
+          }
+        }, 1000);
+      });
+      camSocket.send(JSON.stringify({
+        type: 'frame',
         image: base64,
         frame_number: frameCount,
         reset: false,
-      }),
-    });
-    const data = await res.json();
-    if (res.ok && data.success) {
+        source: 'camera',
+      }));
+      data = await wsPromise;
+    }
+
+    // Fallback path: HTTP POST if WS was unavailable or timed out
+    if (!data) {
+      const res = await fetch('/api/camera/detect-frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: base64,
+          frame_number: frameCount,
+          reset: false,
+          source: 'camera',
+        }),
+      });
+      if (res.ok) {
+        data = await res.json();
+      }
+    }
+
+    if (data && data.success) {
       const cw = canvas.width || vw;
       const ch = canvas.height || vh;
       const scaleX = cw / targetW;
@@ -637,6 +711,10 @@ async function resetAllCounts() {
     `;
   }
   updateSidebarUI();
+
+  if (isCamSocketConnected && camSocket && camSocket.readyState === WebSocket.OPEN) {
+    camSocket.send(JSON.stringify({ type: 'reset', source: 'camera' }));
+  }
 
   try {
     const res = await fetch('/api/detect/reset', { method: 'POST' });

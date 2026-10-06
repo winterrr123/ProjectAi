@@ -1,6 +1,24 @@
+import os
 import socket
+import subprocess
 import sys
+
+# Tự động ưu tiên chạy qua môi trường ảo .venv trên ổ D (nơi đã kích hoạt GPU RTX)
+venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Scripts", "python.exe")
+if os.path.exists(venv_python) and os.path.normcase(sys.executable) != os.path.normcase(venv_python):
+    try:
+        sys.exit(subprocess.call([venv_python] + sys.argv))
+    except KeyboardInterrupt:
+        sys.exit(0)
+
 import uvicorn
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:

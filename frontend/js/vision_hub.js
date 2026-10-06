@@ -172,7 +172,7 @@ window.VisionHub = (function () {
     }
 
     mount.innerHTML = `
-      <div class="vision-hub-card">
+      <div class="vision-hub-card" style="display: none !important;">
         <div class="vision-hub-header">
           <div class="vision-hub-title">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.2">

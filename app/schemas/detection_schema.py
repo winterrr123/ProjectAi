@@ -28,6 +28,7 @@ class FrameDetectionPayload(BaseModel):
     frame_number: int = Field(default=1)
     reset: bool = Field(default=False)
     session_id: Optional[str] = None
+    source: Optional[str] = Field(default="upload", description="'upload' or 'camera'")
 
 
 class SaveLiveSessionPayload(BaseModel):

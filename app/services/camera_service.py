@@ -22,6 +22,12 @@ class CameraService:
         self.tracker = ByteTrackService()
         self.counter = CountingService()
         self.model = YOLOService()
+        self.yolo_service = self.model
+
+    def reset(self) -> None:
+        self.counter.reset()
+        self.tracker = ByteTrackService()
+        self.model.reset_tracker()
 
     def start(self, camera_index: int = 0) -> None:
         self.camera = cv2.VideoCapture(camera_index)

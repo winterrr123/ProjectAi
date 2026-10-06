@@ -63,11 +63,26 @@ VIETNAMESE_PRODUCT_NAMES = {
     "sports-drink": "Nước Thể Thao / Tăng Lực",
     "tea": "Trà Đóng Chai",
     "water": "Nước Suối",
+    # Động vật / Thú cưng
+    "dog": "Con Chó",
+    "cat": "Con Mèo",
+    "bird": "Con Chim",
+    "horse": "Con Ngựa",
+    "sheep": "Con Cừu",
+    "cow": "Con Bò",
+    "elephant": "Con Voi",
+    "bear": "Con Gấu",
+    "zebra": "Ngựa Vằn",
+    "giraffe": "Hươu Cao Cổ",
+    "fish": "Con Cá",
+    "con cá": "Con Cá",
+    "cá": "Con Cá",
+    "người": "Người",
+    "sản phẩm": "Sản phẩm",
 }
 
 # Classes to ignore when counting products (human beings, room furniture, background)
 IGNORED_CLASSES = {
-    "person",
     "chair",
     "couch",
     "bed",
@@ -75,6 +90,12 @@ IGNORED_CLASSES = {
     "toilet",
     "sink",
     "bench",
+    "kite",
+    "airplane",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
 }
 
 
@@ -82,9 +103,12 @@ class YOLOService:
     def __init__(self, model_path: Optional[str] = None):
         self.model_path = model_path or settings.MODEL_PATH
         self.model: Optional[YOLO] = None
+        self.base_coco_model: Optional[YOLO] = None
         self.custom_box_model: Optional[YOLO] = None
         self.custom_coffee_model: Optional[YOLO] = None
-        self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="yolo_infer")
+        self.custom_supermarket_model: Optional[YOLO] = None
+        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="yolo_infer")
+        self._tracker_initialized = False
         self._load_model_if_available()
 
     def _load_model_if_available(self) -> None:
@@ -95,7 +119,22 @@ class YOLOService:
         logger.info("Loading primary YOLO model from %s", self.model_path)
         self.model = YOLO(self.model_path)
 
-        # Check for custom trained product box weights
+        # 1. Base Universal COCO Model (80 classes: orange, bottle, cup, laptop, etc.)
+        # Provides universal general object recognition alongside specialist trained models
+        base_coco_candidates = [
+            settings.PROJECT_ROOT / "yolov8n.pt",
+            settings.PROJECT_ROOT / "models" / "best_backup.pt",
+        ]
+        for b_path in base_coco_candidates:
+            if b_path.exists():
+                try:
+                    logger.info("Loading universal base COCO model from %s", b_path)
+                    self.base_coco_model = YOLO(str(b_path))
+                    break
+                except Exception as e:
+                    logger.warning("Could not load base COCO model from %s: %s", b_path, e)
+
+        # 2. Specialist product box model
         custom_weights_path = settings.PROJECT_ROOT / "runs" / "detect" / "train_box" / "weights" / "best.pt"
         if custom_weights_path.exists():
             try:
@@ -104,7 +143,7 @@ class YOLOService:
             except Exception as e:
                 logger.warning("Could not load custom box model: %s", e)
 
-        # Check for custom trained conveyor coffee bag weights
+        # 3. Specialist conveyor coffee bag model
         coffee_weights_candidates = [
             settings.PROJECT_ROOT / "models" / "coffee_best.pt",
             settings.PROJECT_ROOT / "runs" / "detect" / "train_coffee_v2" / "weights" / "best.pt",
@@ -119,6 +158,15 @@ class YOLOService:
                 except Exception as e:
                     logger.warning("Could not load coffee model from %s: %s", c_path, e)
 
+        # 4. Specialist supermarket drinks model
+        supermarket_path = settings.PROJECT_ROOT / "models" / "supermarket_lab605.pt"
+        if supermarket_path.exists():
+            try:
+                logger.info("Loading supermarket model from %s", supermarket_path)
+                self.custom_supermarket_model = YOLO(str(supermarket_path))
+            except Exception as e:
+                logger.warning("Could not load supermarket model: %s", e)
+
         # Warm up models on dummy frame so first frame has zero cold-start delay
         try:
             device = self.get_device()
@@ -126,214 +174,108 @@ class YOLOService:
             with torch.inference_mode():
                 if self.model is not None:
                     self.model.predict(dummy, imgsz=416, device=device, verbose=False)
+                if self.base_coco_model is not None:
+                    self.base_coco_model.predict(dummy, imgsz=416, device=device, verbose=False)
                 if self.custom_box_model is not None:
                     self.custom_box_model.predict(dummy, imgsz=416, device=device, verbose=False)
                 if self.custom_coffee_model is not None:
                     self.custom_coffee_model.predict(dummy, imgsz=416, device=device, verbose=False)
-            logger.info("YOLO models warmed up successfully")
+                if self.custom_supermarket_model is not None:
+                    self.custom_supermarket_model.predict(dummy, imgsz=416, device=device, verbose=False)
+            logger.info("YOLO multi-model ensemble warmed up successfully")
         except Exception as e:
             logger.warning("Model warmup warning: %s", e)
 
-    def infer(self, frame: np.ndarray, confidence_threshold: float = None) -> List[Dict[str, Any]]:
-        # Balanced threshold (0.25) eliminates jitter/noise while reliably detecting products
-        threshold = confidence_threshold if confidence_threshold is not None else 0.25
-        detections: List[Dict[str, Any]] = []
-        device = self.get_device()
+    def _extract_boxes(
+        self,
+        results: Any,
+        model_source: str,
+        id_offset: int = 0,
+        forced_class_id: Optional[int] = None,
+        forced_class_name: Optional[str] = None,
+        frame_area: float = 0.0,
+        frame_w: float = 0.0,
+        frame_h: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        extracted: List[Dict[str, Any]] = []
+        if results is None:
+            return extracted
 
-        frame_h, frame_w = frame.shape[:2]
-        frame_area = frame_h * frame_w
+        for result in results:
+            boxes = getattr(result, "boxes", None)
+            if boxes is None or len(boxes) == 0:
+                continue
 
-        # Check active vision engine from VisionManager
-        try:
-            from app.services.vision_api_service import vision_manager
-            if vision_manager.active_engine == "yolo_world" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
-                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
-                return self.suppress_overlapping_boxes(world_dets)
-            elif vision_manager.active_engine == "hybrid" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
-                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
-                detections.extend(world_dets)
-        except Exception as e:
-            logger.debug("Vision engine dispatch note: %s", e)
+            for box in boxes:
+                conf = float(box.conf[0].cpu().numpy())
+                cls_id = int(box.cls[0].cpu().numpy())
+                raw_name = result.names.get(cls_id, f"Class_{cls_id}").lower() if hasattr(result, "names") else f"Class_{cls_id}"
 
-        if self.model is None and not detections:
-            return detections
+                if forced_class_name is None and raw_name in IGNORED_CLASSES:
+                    continue
 
-        try:
-            with torch.inference_mode():
-                # Parallel inference if custom coffee or box models are also present
-                f_coffee = None
-                if self.custom_coffee_model is not None:
-                    coffee_conf = min(0.20, threshold) if threshold is not None else 0.20
-                    f_coffee = self.executor.submit(
-                        self.custom_coffee_model.predict,
-                        frame,
-                        imgsz=416,
-                        conf=coffee_conf,
-                        iou=0.35,
-                        device=device,
-                        verbose=False,
-                    )
+                xyxy = box.xyxy[0].cpu().numpy()
+                bx1, by1, bx2, by2 = float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])
+                bw = bx2 - bx1
+                bh = by2 - by1
 
-                f_box = None
-                if self.custom_box_model is not None:
-                    f_box = self.executor.submit(
-                        self.custom_box_model.predict,
-                        frame,
-                        imgsz=416,
-                        conf=max(0.35, threshold),
-                        device=device,
-                        verbose=False,
-                    )
+                # Eliminate false positives on full screen room background
+                max_ratio = 0.98 if raw_name in ("người", "person") else 0.85
+                if frame_area > 0 and ((bw * bh) > (frame_area * max_ratio) or (bw > (frame_w * 0.98) and bh > (frame_h * 0.98))):
+                    continue
+                if bw < 8 or bh < 8 or (frame_area > 0 and (bw * bh) < (frame_area * 0.0003)):
+                    continue
 
-                results = self.model.predict(
-                    frame,
-                    imgsz=416,
-                    conf=max(0.35, threshold),
-                    device=device,
-                    verbose=False,
-                )
+                track_id = None
+                if getattr(box, "id", None) is not None:
+                    track_id = int(box.id[0].cpu().numpy()) + id_offset
 
-                for result in results:
-                    boxes = result.boxes
-                    if boxes is None or len(boxes) == 0:
-                        continue
-                    for box in boxes:
-                        conf = float(box.conf[0].cpu().numpy())
-                        cls_id = int(box.cls[0].cpu().numpy())
-                        raw_name = result.names.get(cls_id, f"Class_{cls_id}").lower()
+                final_cls_id = forced_class_id if forced_class_id is not None else cls_id
+                final_name = forced_class_name if forced_class_name is not None else VIETNAMESE_PRODUCT_NAMES.get(raw_name, raw_name.title())
 
-                        if raw_name in IGNORED_CLASSES:
-                            continue
+                extracted.append({
+                    "tracking_id": track_id,
+                    "class_id": final_cls_id,
+                    "class_name": final_name,
+                    "confidence": round(conf, 2),
+                    "x1": bx1,
+                    "y1": by1,
+                    "x2": bx2,
+                    "y2": by2,
+                    "model_source": model_source,
+                })
 
-                        xyxy = box.xyxy[0].cpu().numpy()
-                        bx1, by1, bx2, by2 = float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])
-                        bw = bx2 - bx1
-                        bh = by2 - by1
-
-                        # Eliminate false positives on full screen room background
-                        if (bw * bh) > (frame_area * 0.75) or bw > (frame_w * 0.95) or bh > (frame_h * 0.95):
-                            continue
-                        if bw < 10 or bh < 10 or (bw * bh) < (frame_area * 0.001):
-                            continue
-
-                        translated_name = VIETNAMESE_PRODUCT_NAMES.get(raw_name, raw_name.title())
-
-                        detections.append({
-                            "tracking_id": None,
-                            "class_id": cls_id,
-                            "class_name": translated_name,
-                            "confidence": round(conf, 2),
-                            "x1": bx1,
-                            "y1": by1,
-                            "x2": bx2,
-                            "y2": by2,
-                        })
-
-                # Merge custom coffee bag detections
-                if f_coffee is not None:
-                    coffee_results = f_coffee.result()
-                    for result in coffee_results:
-                        boxes = result.boxes
-                        if boxes is None or len(boxes) == 0:
-                            continue
-                        for box in boxes:
-                            conf = float(box.conf[0].cpu().numpy())
-                            xyxy = box.xyxy[0].cpu().numpy()
-                            bx1, by1, bx2, by2 = float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])
-                            bw = bx2 - bx1
-                            bh = by2 - by1
-
-                            if (bw * bh) > (frame_area * 0.75) or bw > (frame_w * 0.95) or bh > (frame_h * 0.95):
-                                continue
-                            if bw < 10 or bh < 10 or (bw * bh) < (frame_area * 0.001):
-                                continue
-
-                            # Check overlap with existing detections (IoU > 0.35)
-                            is_dup = False
-                            for d in detections:
-                                dx1, dy1, dx2, dy2 = d["x1"], d["y1"], d["x2"], d["y2"]
-                                inter = max(0.0, min(bx2, dx2) - max(bx1, dx1)) * max(0.0, min(by2, dy2) - max(by1, dy1))
-                                union = (bx2 - bx1) * (by2 - by1) + (dx2 - dx1) * (dy2 - dy1) - inter
-                                if union > 0 and (inter / union) > 0.35:
-                                    # Overwrite generic label with accurate coffee bag label
-                                    d["class_name"] = "Gói Cà Phê"
-                                    d["class_id"] = 100
-                                    d["confidence"] = max(d["confidence"], round(conf, 2))
-                                    is_dup = True
-                                    break
-
-                            if not is_dup:
-                                detections.append({
-                                    "tracking_id": None,
-                                    "class_id": 100,
-                                    "class_name": "Gói Cà Phê",
-                                    "confidence": round(conf, 2),
-                                    "x1": bx1,
-                                    "y1": by1,
-                                    "x2": bx2,
-                                    "y2": by2,
-                                })
-
-                # Merge custom box detections (if available)
-                if f_box is not None:
-                    box_results = f_box.result()
-                    for result in box_results:
-                        boxes = result.boxes
-                        if boxes is None or len(boxes) == 0:
-                            continue
-                        for box in boxes:
-                            conf = float(box.conf[0].cpu().numpy())
-                            xyxy = box.xyxy[0].cpu().numpy()
-                            bx1, by1, bx2, by2 = float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])
-                            bw = bx2 - bx1
-                            bh = by2 - by1
-
-                            if (bw * bh) > (frame_area * 0.75) or bw > (frame_w * 0.95) or bh > (frame_h * 0.95):
-                                continue
-                            if bw < 10 or bh < 10:
-                                continue
-
-                            # Check overlap with existing detections to avoid duplicates (IoU > 0.4)
-                            is_dup = False
-                            for d in detections:
-                                dx1, dy1, dx2, dy2 = d["x1"], d["y1"], d["x2"], d["y2"]
-                                inter = max(0.0, min(bx2, dx2) - max(bx1, dx1)) * max(0.0, min(by2, dy2) - max(by1, dy1))
-                                union = (bx2 - bx1) * (by2 - by1) + (dx2 - dx1) * (dy2 - dy1) - inter
-                                if union > 0 and (inter / union) > 0.4:
-                                    is_dup = True
-                                    break
-
-                            if not is_dup:
-                                detections.append({
-                                    "tracking_id": None,
-                                    "class_id": 99,
-                                    "class_name": "Thùng / Hộp Sản Phẩm",
-                                    "confidence": round(conf, 2),
-                                    "x1": bx1,
-                                    "y1": by1,
-                                    "x2": bx2,
-                                    "y2": by2,
-                                })
-        except Exception as e:
-            logger.error("YOLO inference error: %s", e)
-
-        return self.suppress_overlapping_boxes(detections)
+        return extracted
 
     @staticmethod
     def suppress_overlapping_boxes(detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Strict deduplication & NMS across all model outputs:
-        - If two boxes have IoU > 0.25, keep only the higher-confidence one.
+        Strict deduplication & NMS across all model outputs in the ensemble:
+        - Prioritizes specialist trained models (Người, Con Cá, Gói Cà Phê, Thùng Hộp, Nước Ngọt, Trà...) over generic base COCO detections.
+        - If two boxes have IoU > 0.25, keep only the higher-priority / higher-confidence one.
         - If one box is mostly contained inside another (containment > 0.45), keep only one.
         - If centers are within 40px and have overlap, merge them.
-        - Strictly prevents multiple boxes on the same physical object.
+        - Strictly prevents duplicate bounding boxes on the same physical object.
         """
         if len(detections) <= 1:
             return detections
 
-        def score(d):
-            is_coffee = 1.0 if d.get("class_name") == "Gói Cà Phê" else 0.0
-            return is_coffee * 10.0 + float(d.get("confidence", 0.0))
+        def score(d: Dict[str, Any]) -> float:
+            src = d.get("model_source", "")
+            cls = d.get("class_name", "")
+
+            # Specialist models get strong priority when competing with generic base detections
+            if src in ("specialist", "custom_coffee", "supermarket", "custom_box"):
+                source_priority = 20.0
+            elif cls in ("Con Cá", "Gói Cà Phê", "Thùng / Hộp Sản Phẩm", "Nước Ngọt Cola", "Trà Đóng Chai", "Nước Suối", "Nước Thể Thao / Tăng Lực", "Người"):
+                source_priority = 15.0
+            else:
+                source_priority = 0.0
+
+            # Prioritize detections that already have an established tracking_id
+            has_track = 5.0 if d.get("tracking_id") is not None else 0.0
+
+            return source_priority + has_track + float(d.get("confidence", 0.0))
 
         sorted_dets = sorted(detections, key=score, reverse=True)
         kept: List[Dict[str, Any]] = []
@@ -370,6 +312,256 @@ class YOLOService:
                 kept.append(det)
 
         return kept
+
+    def infer(self, frame: np.ndarray, confidence_threshold: float = None) -> List[Dict[str, Any]]:
+        threshold = confidence_threshold if confidence_threshold is not None else 0.25
+        detections: List[Dict[str, Any]] = []
+        device = self.get_device()
+
+        frame_h, frame_w = frame.shape[:2]
+        frame_area = frame_h * frame_w
+
+        # Check active vision engine from VisionManager
+        try:
+            from app.services.vision_api_service import vision_manager
+            if vision_manager.active_engine == "yolo_world" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
+                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
+                return self.suppress_overlapping_boxes(world_dets)
+            elif vision_manager.active_engine == "hybrid" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
+                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
+                detections.extend(world_dets)
+        except Exception as e:
+            logger.debug("Vision engine dispatch note: %s", e)
+
+        if self.model is None and self.base_coco_model is None and not detections:
+            return detections
+
+        try:
+            with torch.inference_mode():
+                futures = {}
+
+                # 1. Primary specialist model (Sản Phẩm, Người, Con Cá)
+                if self.model is not None:
+                    spec_conf = min(0.20, threshold) if threshold is not None else 0.20
+                    futures["specialist"] = self.executor.submit(
+                        self.model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=spec_conf,
+                        device=device,
+                        verbose=False,
+                    )
+
+                # 2. Universal base COCO model (80 classes: orange, bottle, cup, laptop, etc.)
+                if self.base_coco_model is not None:
+                    futures["base"] = self.executor.submit(
+                        self.base_coco_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=max(0.25, threshold),
+                        device=device,
+                        verbose=False,
+                    )
+
+                # 3. Supermarket drinks specialist model
+                if self.custom_supermarket_model is not None:
+                    futures["supermarket"] = self.executor.submit(
+                        self.custom_supermarket_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=max(0.25, threshold),
+                        device=device,
+                        verbose=False,
+                    )
+
+                # 4. Conveyor coffee bag specialist model
+                if self.custom_coffee_model is not None:
+                    coffee_conf = min(0.20, threshold) if threshold is not None else 0.20
+                    futures["coffee"] = self.executor.submit(
+                        self.custom_coffee_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=coffee_conf,
+                        iou=0.35,
+                        device=device,
+                        verbose=False,
+                    )
+
+                # 5. Box / Carton specialist model
+                if self.custom_box_model is not None:
+                    futures["box"] = self.executor.submit(
+                        self.custom_box_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=max(0.35, threshold),
+                        device=device,
+                        verbose=False,
+                    )
+
+                # Gather and extract detections from all futures
+                if "specialist" in futures:
+                    res = futures["specialist"].result()
+                    detections.extend(self._extract_boxes(res, model_source="specialist", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "base" in futures:
+                    res = futures["base"].result()
+                    detections.extend(self._extract_boxes(res, model_source="base", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "supermarket" in futures:
+                    res = futures["supermarket"].result()
+                    detections.extend(self._extract_boxes(res, model_source="supermarket", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "coffee" in futures:
+                    res = futures["coffee"].result()
+                    detections.extend(self._extract_boxes(res, model_source="custom_coffee", forced_class_id=100, forced_class_name="Gói Cà Phê", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "box" in futures:
+                    res = futures["box"].result()
+                    detections.extend(self._extract_boxes(res, model_source="custom_box", forced_class_id=99, forced_class_name="Thùng / Hộp Sản Phẩm", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+        except Exception as e:
+            logger.error("YOLO ensemble inference error: %s", e)
+
+        return self.suppress_overlapping_boxes(detections)
+
+    def track_infer(self, frame: np.ndarray, confidence_threshold: float = None) -> List[Dict[str, Any]]:
+        """
+        Multi-model ensemble tracking:
+        - Primary specialist model (.track with ByteTrack for custom trained classes: Con Cá, Người, Sản Phẩm)
+        - Base COCO model (.track with ByteTrack for universal objects: orange, bottle, cup, laptop, etc. with ID offset +10000)
+        - Auxiliary specialist models (.predict for coffee, drinks, boxes)
+        - Intelligent suppress_overlapping_boxes deduplication prioritizing specialist detections
+        """
+        threshold = confidence_threshold if confidence_threshold is not None else 0.25
+        detections: List[Dict[str, Any]] = []
+        device = self.get_device()
+
+        frame_h, frame_w = frame.shape[:2]
+        frame_area = frame_h * frame_w
+
+        # Check active vision engine from VisionManager
+        try:
+            from app.services.vision_api_service import vision_manager
+            if vision_manager.active_engine == "yolo_world" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
+                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
+                return self.suppress_overlapping_boxes(world_dets)
+            elif vision_manager.active_engine == "hybrid" and vision_manager.yolo_world_service and vision_manager.yolo_world_service.is_loaded:
+                world_dets = vision_manager.yolo_world_service.infer(frame, confidence_threshold=threshold)
+                detections.extend(world_dets)
+        except Exception as e:
+            logger.debug("Vision engine dispatch note: %s", e)
+
+        if self.model is None and self.base_coco_model is None and not detections:
+            return detections
+
+        try:
+            with torch.inference_mode():
+                futures = {}
+
+                # 1. Primary specialist model with ByteTrack
+                if self.model is not None:
+                    spec_conf = min(0.20, threshold) if threshold is not None else 0.20
+                    futures["specialist"] = self.executor.submit(
+                        self.model.track,
+                        frame,
+                        imgsz=416,
+                        conf=spec_conf,
+                        device=device,
+                        verbose=False,
+                        persist=True,
+                        tracker="bytetrack.yaml",
+                    )
+                    self._tracker_initialized = True
+
+                # 2. Universal base COCO model with ByteTrack (offset ID by +10000 to prevent collisions)
+                if self.base_coco_model is not None:
+                    futures["base"] = self.executor.submit(
+                        self.base_coco_model.track,
+                        frame,
+                        imgsz=416,
+                        conf=max(0.25, threshold),
+                        device=device,
+                        verbose=False,
+                        persist=True,
+                        tracker="bytetrack.yaml",
+                    )
+                    self._tracker_initialized = True
+
+                # 3. Supermarket drinks specialist model
+                if self.custom_supermarket_model is not None:
+                    futures["supermarket"] = self.executor.submit(
+                        self.custom_supermarket_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=max(0.25, threshold),
+                        device=device,
+                        verbose=False,
+                    )
+
+                # 4. Conveyor coffee bag specialist model
+                if self.custom_coffee_model is not None:
+                    coffee_conf = min(0.20, threshold) if threshold is not None else 0.20
+                    futures["coffee"] = self.executor.submit(
+                        self.custom_coffee_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=coffee_conf,
+                        iou=0.35,
+                        device=device,
+                        verbose=False,
+                    )
+
+                # 5. Box / Carton specialist model
+                if self.custom_box_model is not None:
+                    futures["box"] = self.executor.submit(
+                        self.custom_box_model.predict,
+                        frame,
+                        imgsz=416,
+                        conf=max(0.35, threshold),
+                        device=device,
+                        verbose=False,
+                    )
+
+                # Gather and extract detections from all futures
+                if "specialist" in futures:
+                    res = futures["specialist"].result()
+                    detections.extend(self._extract_boxes(res, model_source="specialist", id_offset=0, frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "base" in futures:
+                    res = futures["base"].result()
+                    detections.extend(self._extract_boxes(res, model_source="base", id_offset=10000, frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "supermarket" in futures:
+                    res = futures["supermarket"].result()
+                    detections.extend(self._extract_boxes(res, model_source="supermarket", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "coffee" in futures:
+                    res = futures["coffee"].result()
+                    detections.extend(self._extract_boxes(res, model_source="custom_coffee", forced_class_id=100, forced_class_name="Gói Cà Phê", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+                if "box" in futures:
+                    res = futures["box"].result()
+                    detections.extend(self._extract_boxes(res, model_source="custom_box", forced_class_id=99, forced_class_name="Thùng / Hộp Sản Phẩm", frame_area=frame_area, frame_w=frame_w, frame_h=frame_h))
+
+        except Exception as e:
+            logger.error("YOLO track ensemble error: %s", e)
+
+        return self.suppress_overlapping_boxes(detections)
+
+    def reset_tracker(self) -> None:
+        """Reset the YOLO built-in tracker state for all tracking models."""
+        for m in (self.model, self.base_coco_model):
+            if m is not None:
+                try:
+                    if hasattr(m, "predictor") and m.predictor is not None:
+                        if hasattr(m.predictor, "trackers"):
+                            for tracker in m.predictor.trackers:
+                                tracker.reset()
+                        m.predictor.trackers = []
+                except Exception as e:
+                    logger.warning("Tracker reset note: %s", e)
+        self._tracker_initialized = False
+        logger.info("YOLO multi-model trackers reset successfully")
 
     @staticmethod
     def get_device() -> str:
