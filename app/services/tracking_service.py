@@ -33,7 +33,7 @@ def calculate_center_distance(box1: tuple, box2: tuple) -> float:
 
 
 class ByteTrackService:
-    def __init__(self, max_lost_age: int = 15):
+    def __init__(self, max_lost_age: int = 90):
         # Store active tracks: tracking_id -> TrackedObject (Global spatial tracking)
         self.track_store: Dict[int, TrackedObject] = {}
         # Track last seen frame number to purge aged tracks
@@ -63,10 +63,14 @@ class ByteTrackService:
         accepted_detections: List[dict] = []
         for det in sorted_detections:
             b_det = (float(det["x1"]), float(det["y1"]), float(det["x2"]), float(det["y2"]))
+            bw_det = b_det[2] - b_det[0]
+            bh_det = b_det[3] - b_det[1]
+            diag_det = max(20.0, (bw_det**2 + bh_det**2)**0.5)
+
             is_dup = False
             for acc in accepted_detections:
                 b_acc = (float(acc["x1"]), float(acc["y1"]), float(acc["x2"]), float(acc["y2"]))
-                if calculate_iou(b_det, b_acc) > 0.20 or calculate_center_distance(b_det, b_acc) < 45.0:
+                if calculate_iou(b_det, b_acc) > 0.20 or calculate_center_distance(b_det, b_acc) < diag_det * 0.40:
                     is_dup = True
                     break
             if not is_dup:
@@ -84,6 +88,7 @@ class ByteTrackService:
                 float(detection["y2"]),
             )
             raw_cls_name = detection["class_name"]
+            curr_diag = max(20.0, ((curr_box[2] - curr_box[0])**2 + (curr_box[3] - curr_box[1])**2)**0.5)
 
             # If tracking_id was already assigned externally
             tracking_id = detection.get("tracking_id")
@@ -97,8 +102,11 @@ class ByteTrackService:
                     if cand_id in matched_track_ids:
                         continue
 
-                    # Use velocity-predicted position for matching if available
                     cand_box = (cand_obj.x1, cand_obj.y1, cand_obj.x2, cand_obj.y2)
+                    cand_diag = max(20.0, ((cand_box[2] - cand_box[0])**2 + (cand_box[3] - cand_box[1])**2)**0.5)
+                    avg_diag = (curr_diag + cand_diag) / 2.0
+
+                    # Use velocity-predicted position for matching if available
                     frames_since = frame_number - self.last_seen.get(cand_id, frame_number)
                     if cand_id in self._velocity and frames_since > 0:
                         vx, vy = self._velocity[cand_id]
@@ -124,9 +132,9 @@ class ByteTrackService:
                     # Same class bonus: slightly prefer same class if multiple items are clustered
                     same_class_bonus = 0.10 if cand_obj.class_name == raw_cls_name else 0.0
 
-                    # Tighter matching: IoU >= 0.25 OR centers within 60px
-                    if best_iou >= 0.25 or best_dist <= 60.0:
-                        score = best_iou + max(0.0, 1.0 - (best_dist / 80.0)) + same_class_bonus
+                    # Scale-adaptive matching: IoU >= 0.20 OR distance within avg_diag * 0.75
+                    if best_iou >= 0.20 or (best_iou >= 0.05 and best_dist <= avg_diag * 0.90) or best_dist <= avg_diag * 0.65:
+                        score = best_iou * 10.0 + max(0.0, 1.0 - (best_dist / avg_diag)) * 5.0 + same_class_bonus
                         if score > best_score:
                             best_score = score
                             best_match_id = cand_id
@@ -135,13 +143,13 @@ class ByteTrackService:
                     tracking_id = best_match_id
                 else:
                     # Guard: verify this new box does not heavily overlap with ANY already matched track
-                    # to strictly prevent duplicate IDs on the same physical item
                     overlaps_existing = False
                     for existing_id in matched_track_ids:
                         existing_obj = self.track_store.get(existing_id)
                         if existing_obj:
                             ex_box = (existing_obj.x1, existing_obj.y1, existing_obj.x2, existing_obj.y2)
-                            if calculate_iou(curr_box, ex_box) > 0.20 or calculate_center_distance(curr_box, ex_box) < 45.0:
+                            ex_diag = max(20.0, ((ex_box[2] - ex_box[0])**2 + (ex_box[3] - ex_box[1])**2)**0.5)
+                            if calculate_iou(curr_box, ex_box) > 0.20 or calculate_center_distance(curr_box, ex_box) < ex_diag * 0.40:
                                 overlaps_existing = True
                                 break
                     if overlaps_existing:

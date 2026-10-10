@@ -16,12 +16,12 @@ from app.utils.helpers import logger
 
 
 class CameraService:
-    def __init__(self):
+    def __init__(self, yolo_service: Optional[YOLOService] = None):
         self.camera = None
         self.active = False
         self.tracker = ByteTrackService()
         self.counter = CountingService()
-        self.model = YOLOService()
+        self.model = yolo_service or YOLOService()
         self.yolo_service = self.model
 
     def reset(self) -> None:
@@ -54,11 +54,14 @@ class CameraService:
     def process_frame(self, frame: np.ndarray, frame_number: int = 1) -> Dict[str, Any]:
         inference = self.model.infer(frame, settings.CONFIDENCE_THRESHOLD)
         tracked = self.tracker.update_tracks(inference, frame_number, time.time())
-        counts = self.counter.process(tracked)
-        overlay = draw_detection_overlay(frame, tracked, counts, self.counter.get_total(counts))
+        new_counts = self.counter.process(tracked)
+        accumulated_counts = self.counter.get_accumulated_counts()
+        total = self.counter.get_total_accumulated()
+        overlay = draw_detection_overlay(frame, tracked, accumulated_counts, total)
         return {
             "detections": tracked,
-            "counts": counts,
-            "total": self.counter.get_total(counts),
+            "counts": accumulated_counts,
+            "new_counts": new_counts,
+            "total": total,
             "frame": overlay,
         }

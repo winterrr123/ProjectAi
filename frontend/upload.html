@@ -4,22 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Đếm Sản Phẩm Qua Video - Product Vision</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=3.0" />
+    <link rel="icon" type="image/png" href="/static/assets/logo.png" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.1" />
   </head>
   <body>
-    <!-- Hardware-Accelerated 3D Computer Vision Animation Canvas -->
-    <canvas id="bg3dCanvas" class="bg-3d-canvas" aria-hidden="true"></canvas>
-
     <div class="container">
       <!-- Modern Navigation Topbar -->
       <header class="topbar">
         <a href="/" class="brand-wrapper">
           <div class="brand-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-              <line x1="12" y1="22.08" x2="12" y2="12"></line>
-            </svg>
+            <img src="/static/assets/logo.png" alt="Product Vision Logo" class="brand-logo-img" />
           </div>
           <div class="brand-title">
             <h1>Product Vision</h1>
@@ -68,27 +62,34 @@
             Lịch sử
           </a>
         </nav>
+
+        <div id="userProfileNav" class="user-profile-header"></div>
       </header>
+
+      <!-- Clean Page Intro Header -->
+      <section class="page-intro">
+        <div class="intro-content">
+          <h2 class="intro-title">Studio Tải & Đếm Video</h2>
+          <p class="intro-description">
+            Tải video băng chuyền hoặc dây chuyền sản xuất để nhận diện và kiểm đếm từng món hàng với thuật toán chống trùng lặp.
+          </p>
+        </div>
+        <div class="intro-actions">
+          <a href="/" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            Về Tổng Quan
+          </a>
+        </div>
+      </section>
 
       <!-- Vision AI Hub (Gemini Vision & YOLO-World) -->
       <div id="visionHubMount"></div>
 
-      <!-- Panel Upload Video & Studio -->
-      <main class="panel" style="margin-bottom: 24px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="23 7 16 12 23 17 23 7"></polygon>
-              <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-            </svg>
-            <span>Video Studio - Đếm Sản Phẩm Chuẩn Xác</span>
-          </div>
-          <span class="panel-title-badge">
-            <span class="live-dot" style="display:inline-block; width:6px; height:6px; margin-right:4px;"></span>
-            Sẵn sàng xử lý
-          </span>
-        </div>
-
+      <!-- Studio Workspace (Borderless, clean, typography-led) -->
+      <main class="studio-workspace">
         <!-- 1. Dropzone Chọn/Kéo Thả Video -->
         <div class="dropzone" id="dropZone">
           <input type="file" id="videoUpload" accept="video/mp4,video/avi,video/mov,video/webm,video/mkv" />
@@ -101,15 +102,15 @@
           </div>
           <div class="dropzone-title">Kéo và thả file video vào đây, hoặc nhấn để duyệt</div>
           <div class="dropzone-sub">
-            Hỗ trợ định dạng MP4, WebM, AVI, MOV. Sau khi tải video, bạn có thể xem trực tiếp quá trình phân tích và đếm từng món hàng.
+            Hỗ trợ MP4, WebM, AVI, MOV. Sau khi tải video, bạn có thể xem trực tiếp quá trình phân tích và đếm từng món hàng.
           </div>
 
-          <!-- Video Mẫu Test Nhanh -->
+          <!-- Video Mẫu Thử Nghiệm -->
           <div class="samples-bar" onclick="event.stopPropagation();">
-            <span style="font-size: 0.78rem; color: var(--text-muted);">Video mẫu thử nghiệm:</span>
+            <span style="font-size: 0.78rem; color: var(--text-muted);">Video mẫu thử nhanh:</span>
             <button type="button" class="sample-chip" id="loadSampleCoffee">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-              <span>Băng chuyền cà phê (6444194)</span>
+              <span>Băng chuyền cà phê</span>
             </button>
             <button type="button" class="sample-chip" id="loadSample1">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
@@ -123,7 +124,7 @@
         </div>
 
         <!-- Thông tin file đã chọn -->
-        <div id="fileInfoRow" style="display: none; align-items: center; justify-content: space-between; margin-top: 16px; padding: 12px 18px; background: #ffffff; border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xs);">
+        <div id="fileInfoRow" class="selected-file-banner" style="display: none; align-items: center; justify-content: space-between; padding: 12px 20px; background: #ffffff; border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-xs);">
           <div style="display: flex; align-items: center; gap: 12px;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2">
               <polygon points="23 7 16 12 23 17 23 7"></polygon>
@@ -134,7 +135,7 @@
               <span id="loadedFileSize" style="color: var(--text-muted); font-size: 0.8rem; margin-left: 8px;">(0 MB)</span>
             </div>
           </div>
-          <button id="changeFileBtn" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">
+          <button id="changeFileBtn" class="btn btn-secondary btn-sm">
             Đổi Video Khác
           </button>
         </div>
@@ -150,36 +151,22 @@
               <!-- Canvas vẽ Bounding Boxes và Tracking ID -->
               <canvas id="studioCanvas"></canvas>
 
-              <!-- Computer Vision Viewport Brackets -->
-              <span class="cv-corner top-left"></span>
-              <span class="cv-corner top-right"></span>
-              <span class="cv-corner bottom-left"></span>
-              <span class="cv-corner bottom-right"></span>
-
               <!-- Laser scan element placeholder (hidden via CSS) -->
               <div class="laser-scanline" id="laserLine" style="display:none;"></div>
 
-              <!-- HUD Overlay (Minimalist & Clean) -->
+              <!-- HUD Overlay (Clean & Refined) -->
               <div class="video-hud-overlay">
                 <div class="hud-top-bar">
-                  <div class="hud-pill highlight" style="display: none !important;">
-                    <span class="live-dot" style="width:6px; height:6px;"></span>
-                    <span>AI DETECTION ACTIVE</span>
-                  </div>
                   <div class="hud-pill">
                     FPS: <span id="studioFps" style="font-weight:600;">--</span> &nbsp;|&nbsp; 
-                    Độ trễ: <span id="studioLatency" style="color:var(--success); font-weight:600;">--</span>ms
-                  </div>
-                </div>
-
-                <div class="hud-bottom-bar">
-                  <div class="hud-pill" style="display: none !important;">
-                    Chế độ: <span style="font-weight:600; color:#93c5fd;">REALTIME AI</span>
+                    Độ trễ: <span id="studioLatency" style="color:var(--mint); font-weight:600;">--</span>ms
                   </div>
                   <div class="hud-pill">
                     Trong khung hình: <strong id="activeInFrameCount" style="color:#60a5fa; margin-left:4px;">0</strong>
                   </div>
                 </div>
+
+                <div class="hud-bottom-bar"></div>
               </div>
             </div>
 
@@ -242,28 +229,28 @@
             </div>
           </div>
 
-          <!-- Bảng Metrics & Live Counters bên phải -->
+          <!-- Bảng Metrics & Live Counters bên phải (De-carded) -->
           <div class="studio-sidebar">
             <!-- Thẻ Tổng Số Lượng Sản Phẩm -->
             <div class="hero-counter-card">
               <div class="counter-title-wrap">
                 <span class="counter-label">Tổng Đã Đếm</span>
-                <span class="live-badge">Thời gian thực</span>
+                <span class="live-dot" style="display:inline-block; width:6px; height:6px;"></span>
               </div>
               <div class="counter-number-big" id="totalCountDisplay">0</div>
               <div class="counter-sub">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mint)" stroke-width="2.5">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
                 <span>Thuật toán theo dõi định danh độc nhất</span>
               </div>
             </div>
 
-            <!-- Thẻ Phân Loại Chi Tiết Sản Phẩm (Đã ẩn theo chế độ đếm thuần túy) -->
+            <!-- Thẻ Phân Loại Chi Tiết Sản Phẩm (Ẩn theo chế độ đếm thuần túy) -->
             <div class="category-breakdown-card" style="display: none !important;">
               <div class="category-breakdown-header">
-                <h4 style="font-size: 0.94rem; font-weight: 700; color: var(--text-primary);">Phân Loại Chi Tiết</h4>
-                <span class="panel-title-badge" id="categoryCountBadge">0 Loại</span>
+                <h4 style="font-size: 0.92rem; font-weight: 700; color: var(--text-primary);">Phân Loại Chi Tiết</h4>
+                <span class="sheet-badge" id="categoryCountBadge">0 Loại</span>
               </div>
               <div class="category-list" id="categoryList">
                 <div style="color: var(--text-muted); font-size: 0.84rem; text-align: center; padding: 20px 0;">
@@ -274,9 +261,9 @@
 
             <!-- Thẻ Nhật Ký Sự Kiện Phát Hiện Thời Gian Thực -->
             <div class="live-feed-card">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h4 style="font-size: 0.92rem; font-weight: 700; color: var(--text-primary);">Nhật Ký Đếm Mới</h4>
-                <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600; letter-spacing: 0.04em;">DÒNG HOẠT ĐỘNG</span>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle);">
+                <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary);">Nhật Ký Đếm Mới</h4>
+                <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600; letter-spacing: 0.04em;">HOẠT ĐỘNG</span>
               </div>
               <div class="feed-list" id="feedList">
                 <div style="color: var(--text-muted); font-size: 0.82rem; text-align: center; padding: 14px 0;">
@@ -308,7 +295,7 @@
         </div>
 
         <!-- 3. Khu vực Progress Bar cho Server Batch -->
-        <div id="batchProgressArea" style="display: none; margin-top: 24px; padding: 24px; background: #ffffff; border: 1px solid var(--border-default); border-radius: var(--radius-xl); box-shadow: var(--shadow-card);">
+        <div id="batchProgressArea" style="display: none; margin-top: 24px; padding: 24px; background: #ffffff; border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-xs);">
           <div class="step-container">
             <div class="step-item active" id="step1">
               <div class="step-num">1</div>
@@ -320,7 +307,7 @@
             </div>
             <div class="step-item" id="step3">
               <div class="step-num">3</div>
-              <span>Nhận diện YOLOv8</span>
+              <span>Nhận diện AI</span>
             </div>
             <div class="step-item" id="step4">
               <div class="step-num">4</div>
@@ -354,8 +341,8 @@
     <!-- Toast Container -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <script src="/static/js/background.js"></script>
     <script src="/static/js/vision_hub.js"></script>
     <script src="/static/js/upload.js"></script>
+    <script src="/static/js/auth.js?v=3.6"></script>
   </body>
 </html>

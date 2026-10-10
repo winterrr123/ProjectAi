@@ -7,6 +7,57 @@ from sqlalchemy.orm import Session
 
 from app.models.detection import DetectionResult, DetectionSession, ProductCount
 from app.models.product import Product
+from app.models.user import User
+
+
+class UserCRUD:
+    @staticmethod
+    def get_by_id(db: Session, user_id: int) -> Optional[User]:
+        return db.query(User).filter(User.id == user_id).first()
+
+    @staticmethod
+    def get_by_google_id(db: Session, google_id: str) -> Optional[User]:
+        return db.query(User).filter(User.google_id == google_id).first()
+
+    @staticmethod
+    def get_by_email(db: Session, email: str) -> Optional[User]:
+        return db.query(User).filter(User.email == email).first()
+
+    @staticmethod
+    def get_or_create_google_user(
+        db: Session,
+        google_id: str,
+        email: str,
+        full_name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
+    ) -> User:
+        user = db.query(User).filter((User.google_id == google_id) | (User.email == email)).first()
+        if user:
+            updated = False
+            if full_name and user.full_name != full_name:
+                user.full_name = full_name
+                updated = True
+            if avatar_url and user.avatar_url != avatar_url:
+                user.avatar_url = avatar_url
+                updated = True
+            if user.google_id != google_id:
+                user.google_id = google_id
+                updated = True
+            if updated:
+                db.commit()
+                db.refresh(user)
+            return user
+
+        user = User(
+            google_id=google_id,
+            email=email,
+            full_name=full_name,
+            avatar_url=avatar_url,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
 
 
 class ProductCRUD:
@@ -27,8 +78,12 @@ class ProductCRUD:
 
 class SessionCRUD:
     @staticmethod
-    def create_session(db: Session, session_type: str, video_name: Optional[str] = None) -> DetectionSession:
-        session = DetectionSession(session_type=session_type.upper(), video_name=video_name)
+    def create_session(
+        db: Session, session_type: str, video_name: Optional[str] = None, user_id: int = 1
+    ) -> DetectionSession:
+        session = DetectionSession(
+            session_type=session_type.upper(), video_name=video_name, user_id=user_id
+        )
         db.add(session)
         db.commit()
         db.refresh(session)
@@ -43,31 +98,62 @@ class SessionCRUD:
             db.commit()
 
     @staticmethod
-    def get_sessions(db: Session) -> List[DetectionSession]:
-        return db.query(DetectionSession).order_by(DetectionSession.started_at.desc()).all()
+    def get_sessions(db: Session, user_id: Optional[int] = None) -> List[DetectionSession]:
+        query = db.query(DetectionSession)
+        if user_id is not None:
+            query = query.filter(DetectionSession.user_id == user_id)
+        return query.order_by(DetectionSession.started_at.desc()).all()
 
     @staticmethod
-    def get_session_by_id(db: Session, session_id: int) -> Optional[DetectionSession]:
-        return db.query(DetectionSession).filter(DetectionSession.id == session_id).first()
+    def get_session_by_id(
+        db: Session, session_id: int, user_id: Optional[int] = None
+    ) -> Optional[DetectionSession]:
+        query = db.query(DetectionSession).filter(DetectionSession.id == session_id)
+        if user_id is not None:
+            query = query.filter(DetectionSession.user_id == user_id)
+        return query.first()
 
     @staticmethod
-    def get_statistics(db: Session) -> Dict[str, object]:
-        total_sessions = db.query(DetectionSession).count()
-        total_video_sessions = db.query(DetectionSession).filter(DetectionSession.session_type == "VIDEO").count()
-        total_camera_sessions = db.query(DetectionSession).filter(DetectionSession.session_type == "CAMERA").count()
-        total_objects = db.query(func.coalesce(func.sum(DetectionSession.total_objects), 0)).scalar() or 0
+    def get_statistics(db: Session, user_id: Optional[int] = None) -> Dict[str, object]:
+        base_session_q = db.query(DetectionSession)
+        if user_id is not None:
+            base_session_q = base_session_q.filter(DetectionSession.user_id == user_id)
+
+        total_sessions = base_session_q.count()
+        total_video_sessions = base_session_q.filter(DetectionSession.session_type == "VIDEO").count()
+        total_camera_sessions = base_session_q.filter(DetectionSession.session_type == "CAMERA").count()
+
+        obj_q = db.query(func.coalesce(func.sum(DetectionSession.total_objects), 0))
+        if user_id is not None:
+            obj_q = obj_q.filter(DetectionSession.user_id == user_id)
+        total_objects = obj_q.scalar() or 0
+
+        res_q = db.query(DetectionResult).join(
+            DetectionSession, DetectionResult.session_id == DetectionSession.id
+        )
+        if user_id is not None:
+            res_q = res_q.filter(DetectionSession.user_id == user_id)
+
         most_common = (
-            db.query(DetectionResult.class_name, func.count(DetectionResult.id).label("count"))
+            res_q.with_entities(DetectionResult.class_name, func.count(DetectionResult.id).label("count"))
             .group_by(DetectionResult.class_name)
             .order_by(func.count(DetectionResult.id).desc())
             .first()
         )
-        avg_confidence = db.query(func.avg(DetectionResult.confidence)).scalar() or 0.0
+
+        avg_conf_q = db.query(func.avg(DetectionResult.confidence)).join(
+            DetectionSession, DetectionResult.session_id == DetectionSession.id
+        )
+        if user_id is not None:
+            avg_conf_q = avg_conf_q.filter(DetectionSession.user_id == user_id)
+        avg_confidence = avg_conf_q.scalar() or 0.0
+
         classes = (
-            db.query(DetectionResult.class_name, func.sum(1).label("count"))
+            res_q.with_entities(DetectionResult.class_name, func.count(DetectionResult.id).label("count"))
             .group_by(DetectionResult.class_name)
             .all()
         )
+
         return {
             "total_sessions": total_sessions,
             "total_video_sessions": total_video_sessions,
@@ -107,5 +193,10 @@ class DetectionCRUD:
         db.commit()
 
     @staticmethod
-    def get_recent_sessions(db: Session, limit: int = 10) -> List[DetectionSession]:
-        return db.query(DetectionSession).order_by(DetectionSession.started_at.desc()).limit(limit).all()
+    def get_recent_sessions(
+        db: Session, user_id: Optional[int] = None, limit: int = 10
+    ) -> List[DetectionSession]:
+        query = db.query(DetectionSession)
+        if user_id is not None:
+            query = query.filter(DetectionSession.user_id == user_id)
+        return query.order_by(DetectionSession.started_at.desc()).limit(limit).all()

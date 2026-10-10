@@ -17,7 +17,9 @@ class DetectionSession(Base):
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     ended_at = Column(DateTime, nullable=True)
     total_objects = Column(Integer, default=0, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
+    user = relationship("User", back_populates="sessions")
     detections = relationship("DetectionResult", back_populates="session")
     counts = relationship("ProductCount", back_populates="session")
 

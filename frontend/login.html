@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập - Product Vision AI</title>
+    <link rel="icon" type="image/png" href="/static/assets/logo.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        :root {
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-glass: rgba(255, 255, 255, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            min-height: 100vh;
+            background-color: #0b0f19;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Dynamic Background System */
+        .dynamic-bg-container {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .dynamic-bg-layer {
+            position: absolute;
+            inset: -20px;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            opacity: 0;
+            transform: scale(1.04);
+            filter: brightness(0.68) saturate(1.18);
+            transition: opacity 1s cubic-bezier(0.16, 1, 0.3, 1), transform 1.2s ease-out;
+        }
+
+        .dynamic-bg-layer.is-active {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .dynamic-bg-overlay {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at center, rgba(11, 15, 25, 0.35) 0%, rgba(11, 15, 25, 0.78) 100%),
+                        linear-gradient(180deg, rgba(11, 15, 25, 0.45) 0%, rgba(11, 15, 25, 0.88) 100%);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+        }
+
+        .dynamic-ambient-glow {
+            position: absolute;
+            width: 520px;
+            height: 520px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, rgba(37, 99, 235, 0.08) 45%, transparent 70%);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: pulseGlow 6s ease-in-out infinite alternate;
+        }
+
+        @keyframes pulseGlow {
+            0% { transform: translate(-50%, -50%) scale(0.92); opacity: 0.6; }
+            100% { transform: translate(-50%, -50%) scale(1.08); opacity: 1; }
+        }
+
+        /* Login Layout */
+        .login-wrapper {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 440px;
+            padding: 24px;
+            margin: auto;
+        }
+
+        .login-card {
+            background: rgba(15, 23, 42, 0.78);
+            backdrop-filter: blur(28px);
+            -webkit-backdrop-filter: blur(28px);
+            border: 1px solid var(--border-glass);
+            border-radius: 24px;
+            padding: 42px 34px 34px;
+            box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7),
+                        0 0 0 1px rgba(255, 255, 255, 0.06),
+                        0 0 45px -10px rgba(59, 130, 246, 0.15);
+            text-align: center;
+            animation: cardEntrance 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes cardEntrance {
+            from {
+                opacity: 0;
+                transform: translateY(18px) scale(0.98);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        /* Brand & Header */
+        .login-brand-badge {
+            width: 54px;
+            height: 54px;
+            margin: 0 auto 18px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.25s ease;
+        }
+
+        .login-card:hover .login-brand-badge {
+            transform: scale(1.04);
+        }
+
+        .login-brand-img {
+            width: 32px;
+            height: 32px;
+            object-fit: contain;
+            display: block;
+        }
+
+        .login-title {
+            font-size: 1.55rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            color: #ffffff;
+            margin-bottom: 8px;
+            line-height: 1.2;
+        }
+
+        .login-subtitle {
+            font-size: 0.88rem;
+            color: var(--text-muted);
+            line-height: 1.55;
+            margin-bottom: 26px;
+        }
+
+        /* Alert / Messages */
+        .alert-box {
+            display: none;
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 18px;
+            font-size: 0.84rem;
+            text-align: left;
+            line-height: 1.45;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+        }
+
+        /* Google Sign In Container */
+        .google-btn-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px 0 16px;
+            min-height: 48px;
+        }
+
+        /* Dev Quick Login Box */
+        .dev-mode-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            padding: 16px 14px;
+            margin: 18px 0;
+            text-align: left;
+        }
+
+        .dev-mode-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.74rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #38bdf8;
+            margin-bottom: 8px;
+        }
+
+        .dev-mode-desc {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            line-height: 1.45;
+            margin-bottom: 12px;
+        }
+
+        .dev-btn-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .btn-dev-login {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 9px;
+            color: #f1f5f9;
+            font-size: 0.82rem;
+            font-weight: 600;
+            padding: 9px 12px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-dev-login:hover {
+            background: rgba(255, 255, 255, 0.14);
+            border-color: rgba(255, 255, 255, 0.28);
+            transform: translateY(-1px);
+        }
+
+        .btn-dev-admin {
+            border-left: 3px solid #10b981;
+        }
+
+        .btn-dev-user {
+            border-left: 3px solid #3b82f6;
+        }
+
+        /* Divider & Footer */
+        .login-divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.09);
+            margin: 22px 0 16px;
+        }
+
+        .login-footer-info {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            font-size: 0.78rem;
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .login-footer-info i {
+            color: #10b981;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 480px) {
+            .login-card {
+                padding: 32px 22px 24px;
+                border-radius: 20px;
+            }
+            .login-title {
+                font-size: 1.35rem;
+            }
+            .dev-btn-group {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Dynamic Pinterest Ambient Background -->
+    <div class="dynamic-bg-container">
+        <div id="dynamicBgLayer" class="dynamic-bg-layer"></div>
+        <div class="dynamic-bg-overlay"></div>
+        <div class="dynamic-ambient-glow"></div>
+    </div>
+
+    <!-- Login Content -->
+    <div class="login-wrapper">
+        <div class="login-card">
+            <div class="login-brand-badge">
+                <img src="/static/assets/logo.png" alt="Product Vision Logo" class="login-brand-img">
+            </div>
+
+            <h1 class="login-title">Product Vision AI</h1>
+            <p class="login-subtitle">
+                Đăng nhập để truy cập không gian đếm sản phẩm và theo dõi số liệu phân tích của bạn.
+            </p>
+
+            <div id="alertBox" class="alert-box alert-error"></div>
+
+            {% if not google_client_id %}
+            <!-- Local Development Quick Access Mode -->
+            <div class="dev-mode-card">
+                <div class="dev-mode-badge">
+                    <i class="fa-solid fa-bolt"></i> Chế độ Thử Nghiệm Nhanh
+                </div>
+                <p class="dev-mode-desc">
+                    Google Client ID chưa cấu hình trong <code>.env</code>. Bạn có thể chọn tài khoản giả lập để đăng nhập ngay:
+                </p>
+                <div class="dev-btn-group">
+                    <button type="button" class="btn-dev-login btn-dev-admin" onclick="quickDevLogin('Quản trị viên', 'admin@company.com')">
+                        <i class="fa-solid fa-user-shield"></i> Admin User
+                    </button>
+                    <button type="button" class="btn-dev-login btn-dev-user" onclick="quickDevLogin('Kỹ thuật viên', 'tech@company.com')">
+                        <i class="fa-solid fa-user-gear"></i> Tech User
+                    </button>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Google Sign-In SDK Anchor -->
+            <div id="g_id_onload"
+                 data-client_id="{{ google_client_id }}"
+                 data-callback="handleCredentialResponse"
+                 data-auto_prompt="true">
+            </div>
+
+            <div class="google-btn-wrapper" {% if not google_client_id %}style="display: none;"{% endif %}>
+                <div class="g_id_signin"
+                     data-type="standard"
+                     data-size="large"
+                     data-theme="filled_blue"
+                     data-text="sign_in_with"
+                     data-shape="pill"
+                     data-logo_alignment="left">
+                </div>
+            </div>
+
+            <div class="login-divider"></div>
+
+            <div class="login-footer-info">
+                <i class="fa-solid fa-shield-halved"></i>
+                <span>Xác thực bảo mật qua Google OAuth 2.0</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Gọi API backend lấy URL ảnh nền động từ Pinterest link
+        async function loadDynamicBackground() {
+            const bgLayer = document.getElementById('dynamicBgLayer');
+            
+            try {
+                const response = await fetch('/api/auth/background');
+                const data = await response.json();
+                
+                if (data && data.success) {
+                    const targetUrl = data.background_url || data.online_url || '/static/assets/login_dynamic_bg.gif';
+                    
+                    // Preload ảnh/gif trước khi hiển thị mượt mà
+                    const preloader = new Image();
+                    preloader.onload = () => {
+                        bgLayer.style.backgroundImage = `url('${targetUrl}')`;
+                        bgLayer.classList.add('is-active');
+                    };
+                    preloader.onerror = () => {
+                        // Fallback về asset local nếu tải online gặp vấn đề
+                        bgLayer.style.backgroundImage = "url('/static/assets/login_dynamic_bg.gif')";
+                        bgLayer.classList.add('is-active');
+                    };
+                    preloader.src = targetUrl;
+                }
+            } catch (err) {
+                console.warn('Lỗi kết nối API nền động, sử dụng local fallback:', err);
+                bgLayer.style.backgroundImage = "url('/static/assets/login_dynamic_bg.gif')";
+                bgLayer.classList.add('is-active');
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', loadDynamicBackground);
+
+        async function quickDevLogin(name, email) {
+            const alertBox = document.getElementById('alertBox');
+            alertBox.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/auth/dev-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, email: email })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    const params = new URLSearchParams(window.location.search);
+                    const nextUrl = params.get('next') || '/';
+                    window.location.href = nextUrl;
+                } else {
+                    alertBox.textContent = data.detail || data.message || 'Đăng nhập thử nghiệm thất bại.';
+                    alertBox.style.display = 'block';
+                }
+            } catch (err) {
+                console.error(err);
+                alertBox.textContent = 'Không thể kết nối đến máy chủ xác thực.';
+                alertBox.style.display = 'block';
+            }
+        }
+
+        async function handleCredentialResponse(response) {
+            const alertBox = document.getElementById('alertBox');
+            alertBox.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/auth/google', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credential: response.credential })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    const params = new URLSearchParams(window.location.search);
+                    const nextUrl = params.get('next') || '/';
+                    window.location.href = nextUrl;
+                } else {
+                    alertBox.textContent = data.detail || data.message || 'Đăng nhập Google thất bại.';
+                    alertBox.style.display = 'block';
+                }
+            } catch (err) {
+                console.error(err);
+                alertBox.textContent = 'Không thể kết nối đến máy chủ xác thực.';
+                alertBox.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>

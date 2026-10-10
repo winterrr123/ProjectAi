@@ -351,8 +351,8 @@ function drawDetections(ctx, width, height) {
       track.currX2 >= width - 15 ||
       track.currY2 >= height - 15;
 
-    // Fast purge if near edge, otherwise max 450ms persistence to prevent ghost trail
-    const maxAge = isNearEdge ? 250 : 450;
+    // Persistence up to 750ms to completely prevent box flickering
+    const maxAge = isNearEdge ? 350 : 750;
 
     if (age > maxAge) {
       cameraTracks.delete(trackId);

@@ -41,7 +41,7 @@ def calculate_box_iou(box1: Tuple[float, float, float, float], box2: Tuple[float
 class VideoProcessingService:
     def __init__(self, yolo_service: Optional[YOLOService] = None):
         self.yolo_service = yolo_service or YOLOService()
-        self.counter = CountingService(min_hits=3)
+        self.counter = CountingService(min_hits=2)
         # EMA smoothing for box coordinates
         self._smooth_boxes: Dict[int, Tuple[float, float, float, float]] = {}
         # Active tracks: tid -> {box, center, velocity, last_frame}
@@ -192,11 +192,11 @@ class VideoProcessingService:
     def _post_process(self, detections: List[dict], frame_number: int, timestamp: float) -> List[dict]:
         """
         Post-process detections:
-        - Geometric validation (reject noise/background)
-        - Re-identification (prevent ID-switch from re-counting lost objects)
-        - Fallback spatial tracking for custom models
+        - Geometric validation (reject noise / full-screen background)
+        - Resolution-adaptive Re-identification (prevent ID-switch from re-counting lost objects)
+        - Scale-invariant fallback spatial tracking for custom models
         - EMA box smoothing (alpha = 0.45)
-        - Normalize class to 'Sản phẩm' (AGENTS.md compliance)
+        - Uniform naming: 'Sản phẩm' (AGENTS.md compliance)
         """
         tracked: List[dict] = []
         smooth_alpha = 0.45
@@ -206,75 +206,104 @@ class VideoProcessingService:
             raw_box = (float(det["x1"]), float(det["y1"]), float(det["x2"]), float(det["y2"]))
             bw = raw_box[2] - raw_box[0]
             bh = raw_box[3] - raw_box[1]
-            if bw < 10 or bh < 10:
+            if bw < 15 or bh < 15:
+                continue
+
+            # Reject false-positive giant / full-screen background boxes (e.g. ocean/floor > 70% frame)
+            if (bw > 3000 and bh > 1800) or (bw * bh > 6500000):
                 continue
 
             cx = (raw_box[0] + raw_box[2]) / 2.0
             cy = (raw_box[1] + raw_box[3]) / 2.0
+            diag = math.hypot(bw, bh)
             raw_tid = det.get("tracking_id")
             resolved_tid = None
 
+            # Helper to check if raw_box matches a candidate track in scale-independent way
+            def match_candidate(cand_box: tuple, cand_center: tuple, cand_vel: tuple, dt_frames: int) -> float:
+                c_bw = cand_box[2] - cand_box[0]
+                c_bh = cand_box[3] - cand_box[1]
+                avg_diag = max(20.0, (diag + math.hypot(c_bw, c_bh)) / 2.0)
+                iou = calculate_box_iou(raw_box, cand_box)
+                raw_dist = math.hypot(cx - cand_center[0], cy - cand_center[1])
+
+                # Velocity-predicted center
+                vx, vy = cand_vel
+                pred_cx = cand_center[0] + vx * dt_frames
+                pred_cy = cand_center[1] + vy * dt_frames
+                pred_dist = math.hypot(cx - pred_cx, cy - pred_cy)
+                best_dist = min(raw_dist, pred_dist)
+
+                # Match conditions:
+                # 1. High IoU
+                # 2. Moderate IoU + distance within 1.0x object diagonal
+                # 3. Direct spatial proximity within 0.7x object diagonal
+                if iou > 0.20 or (iou > 0.05 and best_dist < avg_diag * 1.0) or (best_dist < avg_diag * 0.70):
+                    return iou * 10.0 + max(0.0, 1.0 - (best_dist / avg_diag)) * 5.0
+                return 0.0
+
             # CASE 1: YOLO assigned a tracking_id
             if raw_tid is not None:
-                # If raw_tid is already known and active in current tracks
                 if raw_tid in self._active_tracks and raw_tid not in assigned_tids:
                     resolved_tid = raw_tid
                 else:
-                    # Check if this "new" tracker ID is actually a recovered lost track (Re-ID against ID-switching)
-                    best_lost_id = None
+                    # Check active tracks first to see if this corresponds to an already active track
+                    best_match_id = None
                     best_match_score = 0.0
-                    for lost_id, lost_info in list(self._lost_tracks.items()):
-                        if lost_id in assigned_tids:
+                    for atid, ainfo in self._active_tracks.items():
+                        if atid in assigned_tids:
                             continue
-                        dt = max(1, frame_number - lost_info["lost_frame"])
-                        if dt > 30:
-                            continue
-                        vx, vy = lost_info.get("velocity", (0.0, 0.0))
-                        pred_cx = lost_info["center"][0] + vx * dt
-                        pred_cy = lost_info["center"][1] + vy * dt
-                        center_dist = math.hypot(cx - pred_cx, cy - pred_cy)
-                        iou = calculate_box_iou(raw_box, lost_info["box"])
+                        dt = max(1, frame_number - ainfo["last_frame"])
+                        score = match_candidate(ainfo["box"], ainfo["center"], ainfo.get("velocity", (0.0, 0.0)), dt)
+                        if score > best_match_score:
+                            best_match_score = score
+                            best_match_id = atid
 
-                        # High IoU or close trajectory match
-                        if iou > 0.35 or (center_dist < 50.0 and iou > 0.15) or center_dist < 32.0:
-                            score = iou * 10.0 + (100.0 - min(100.0, center_dist)) / 10.0
+                    # If not matched in active tracks, check lost tracks buffer (up to 150 frames)
+                    if best_match_id is None:
+                        for lost_id, lost_info in list(self._lost_tracks.items()):
+                            if lost_id in assigned_tids:
+                                continue
+                            dt = max(1, frame_number - lost_info["lost_frame"])
+                            if dt > 150:
+                                continue
+                            score = match_candidate(lost_info["box"], lost_info["center"], lost_info.get("velocity", (0.0, 0.0)), dt)
                             if score > best_match_score:
                                 best_match_score = score
-                                best_lost_id = lost_id
+                                best_match_id = lost_id
 
-                    if best_lost_id is not None:
-                        # Successfully recovered lost identity!
-                        resolved_tid = best_lost_id
-                        self._lost_tracks.pop(best_lost_id, None)
+                    if best_match_id is not None:
+                        resolved_tid = best_match_id
+                        self._lost_tracks.pop(best_match_id, None)
                     else:
                         resolved_tid = raw_tid
 
             # CASE 2: No tracking ID provided (custom model or tracker dropout)
             if resolved_tid is None:
-                # Try spatial matching against active tracks first
                 best_match = None
-                best_iou = 0.0
+                best_score = 0.0
+
+                # Match against active tracks
                 for atid, ainfo in self._active_tracks.items():
                     if atid in assigned_tids:
                         continue
-                    iou = calculate_box_iou(raw_box, ainfo["box"])
-                    cdist = math.hypot(cx - ainfo["center"][0], cy - ainfo["center"][1])
-                    if (iou > 0.35 or (iou > 0.20 and cdist < 45.0)) and iou > best_iou:
-                        best_iou = iou
+                    dt = max(1, frame_number - ainfo["last_frame"])
+                    score = match_candidate(ainfo["box"], ainfo["center"], ainfo.get("velocity", (0.0, 0.0)), dt)
+                    if score > best_score:
+                        best_score = score
                         best_match = atid
 
-                # Next try matching against recently lost tracks
+                # Match against recently lost tracks
                 if best_match is None:
                     for ltid, linfo in list(self._lost_tracks.items()):
                         if ltid in assigned_tids:
                             continue
                         dt = max(1, frame_number - linfo["lost_frame"])
-                        if dt > 30:
+                        if dt > 150:
                             continue
-                        iou = calculate_box_iou(raw_box, linfo["box"])
-                        cdist = math.hypot(cx - linfo["center"][0], cy - linfo["center"][1])
-                        if (iou > 0.35 or (iou > 0.20 and cdist < 45.0)) and iou > best_iou:
-                            best_iou = iou
+                        score = match_candidate(linfo["box"], linfo["center"], linfo.get("velocity", (0.0, 0.0)), dt)
+                        if score > best_score:
+                            best_score = score
                             best_match = ltid
 
                 if best_match is not None:
@@ -344,8 +373,8 @@ class VideoProcessingService:
                 ainfo["lost_frame"] = frame_number
                 self._lost_tracks[atid] = ainfo
 
-        # Purge stale tracks older than 35 frames from lost buffer and smooth boxes
-        stale_tids = [ltid for ltid, linfo in self._lost_tracks.items() if (frame_number - linfo["lost_frame"]) > 35]
+        # Purge stale tracks older than 150 frames from lost buffer and smooth boxes
+        stale_tids = [ltid for ltid, linfo in self._lost_tracks.items() if (frame_number - linfo["lost_frame"]) > 150]
         for ltid in stale_tids:
             self._lost_tracks.pop(ltid, None)
             self._smooth_boxes.pop(ltid, None)

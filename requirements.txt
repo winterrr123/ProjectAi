@@ -13,3 +13,5 @@ pydantic==2.9.2
 pillow==10.4.0
 requests==2.32.2
 lapx>=0.5.2
+google-auth>=2.29.0
+pyjwt>=2.8.0

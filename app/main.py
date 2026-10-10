@@ -7,18 +7,21 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import cv2
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.cors import CORSMiddleware
 
+from app.api.routes_auth import router as auth_router
 from app.api.routes_vision import router as vision_router
 from app.config import settings
 from app.database.crud import DetectionCRUD, ProductCRUD, SessionCRUD
 from app.database.mysql import SessionLocal, init_db
+from app.models.user import User
+from app.utils.auth import decode_access_token, get_current_user, get_token_from_request
 from app.services.camera_service import CameraService
 from app.services.tracking_service import ByteTrackService
 from app.services.video_service import VideoProcessingService
@@ -56,6 +59,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(vision_router)
 
 app.mount("/static", StaticFiles(directory=str(settings.FRONTEND_DIR)), name="static")
@@ -64,7 +68,23 @@ app.mount("/assets", StaticFiles(directory=str(settings.FRONTEND_DIR)), name="as
 
 templates = Jinja2Templates(directory=str(settings.FRONTEND_DIR))
 video_service = VideoProcessingService()
-camera_service = CameraService()
+camera_service = CameraService(yolo_service=video_service.yolo_service)
+
+
+def is_authenticated(request: Request) -> bool:
+    token = get_token_from_request(request)
+    if not token:
+        return False
+    payload = decode_access_token(token)
+    return payload is not None and bool(payload.get("sub"))
+
+
+@app.get("/login")
+@app.get("/login.html")
+async def login_page(request: Request):
+    if is_authenticated(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse("login.html", {"request": request, "google_client_id": settings.GOOGLE_CLIENT_ID})
 
 
 @app.get("/")
@@ -76,24 +96,32 @@ async def index(request: Request):
 @app.get("/upload")
 @app.get("/upload.html")
 async def upload_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url=f"/login?next={request.url.path}", status_code=303)
     return templates.TemplateResponse("upload.html", {"request": request})
 
 
 @app.get("/camera")
 @app.get("/camera.html")
 async def camera_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url=f"/login?next={request.url.path}", status_code=303)
     return templates.TemplateResponse("camera.html", {"request": request})
 
 
 @app.get("/history")
 @app.get("/history.html")
 async def history_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url=f"/login?next={request.url.path}", status_code=303)
     return templates.TemplateResponse("history.html", {"request": request})
 
 
 @app.get("/statistics")
 @app.get("/statistics.html")
 async def statistics_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url=f"/login?next={request.url.path}", status_code=303)
     return templates.TemplateResponse("statistics.html", {"request": request})
 
 
@@ -282,11 +310,13 @@ async def ws_detect(websocket: WebSocket):
 
 
 @app.post("/api/video/save-session")
-async def save_live_session(payload: SaveLiveSessionPayload):
+async def save_live_session(payload: SaveLiveSessionPayload, current_user: User = Depends(get_current_user)):
     db = None
     try:
         db = SessionLocal()
-        session = SessionCRUD.create_session(db, payload.session_type, payload.video_name)
+        session = SessionCRUD.create_session(
+            db, payload.session_type, payload.video_name, user_id=current_user.id
+        )
         SessionCRUD.update_session_total(db, session.id, payload.total_objects)
         if payload.by_class:
             DetectionCRUD.save_product_counts(db, session.id, payload.by_class)
@@ -307,11 +337,13 @@ async def save_live_session(payload: SaveLiveSessionPayload):
 
 
 @app.post("/api/video/process")
-async def process_video(payload: DetectionRequest):
+async def process_video(payload: DetectionRequest, current_user: User = Depends(get_current_user)):
     db = None
     try:
         db = SessionLocal()
-        session = SessionCRUD.create_session(db, payload.session_type, payload.video_name)
+        session = SessionCRUD.create_session(
+            db, payload.session_type, payload.video_name, user_id=current_user.id
+        )
         video_name = payload.video_name or "uploaded_video.mp4"
         if not os.path.exists(settings.UPLOAD_FOLDER / video_name):
             raise HTTPException(status_code=404, detail="Upload not found")
@@ -396,11 +428,11 @@ async def camera_stop(payload: CameraSessionPayload):
 
 
 @app.get("/api/sessions")
-async def list_sessions():
+async def list_sessions(current_user: User = Depends(get_current_user)):
     db = None
     try:
         db = SessionLocal()
-        sessions = SessionCRUD.get_sessions(db)
+        sessions = SessionCRUD.get_sessions(db, user_id=current_user.id)
         return {
             "success": True,
             "sessions": [
@@ -424,11 +456,11 @@ async def list_sessions():
 
 
 @app.get("/api/sessions/{session_id}")
-async def get_session(session_id: int):
+async def get_session(session_id: int, current_user: User = Depends(get_current_user)):
     db = None
     try:
         db = SessionLocal()
-        session = SessionCRUD.get_session_by_id(db, session_id)
+        session = SessionCRUD.get_session_by_id(db, session_id, user_id=current_user.id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -442,6 +474,8 @@ async def get_session(session_id: int):
                 "total_objects": session.total_objects,
             },
         }
+    except HTTPException:
+        raise
     except SQLAlchemyError as exc:
         logger.exception("Database error while fetching session: %s", exc)
         return {"success": False, "message": "Database unavailable"}
@@ -451,11 +485,11 @@ async def get_session(session_id: int):
 
 
 @app.get("/api/statistics")
-async def statistics():
+async def statistics(current_user: User = Depends(get_current_user)):
     db = None
     try:
         db = SessionLocal()
-        stats = SessionCRUD.get_statistics(db)
+        stats = SessionCRUD.get_statistics(db, user_id=current_user.id)
         return {"success": True, "statistics": stats}
     except SQLAlchemyError as exc:
         logger.exception("Database error while fetching statistics: %s", exc)
@@ -487,11 +521,11 @@ async def get_products():
 
 
 @app.get("/api/video/result/{session_id}")
-async def get_video_result(session_id: int):
+async def get_video_result(session_id: int, current_user: User = Depends(get_current_user)):
     db = None
     try:
         db = SessionLocal()
-        session = SessionCRUD.get_session_by_id(db, session_id)
+        session = SessionCRUD.get_session_by_id(db, session_id, user_id=current_user.id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -503,6 +537,8 @@ async def get_video_result(session_id: int):
                 "session_type": session.session_type,
             },
         }
+    except HTTPException:
+        raise
     except SQLAlchemyError as exc:
         logger.exception("Database error while fetching result: %s", exc)
         return {"success": False, "message": "Database unavailable"}

@@ -4,22 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Lịch Sử Phiên Nhận Diện - Product Vision</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=3.0" />
+    <link rel="icon" type="image/png" href="/static/assets/logo.png" />
+    <link rel="stylesheet" href="/static/css/style.css?v=4.1" />
   </head>
   <body>
-    <!-- Hardware-Accelerated 3D Computer Vision Animation Canvas -->
-    <canvas id="bg3dCanvas" class="bg-3d-canvas" aria-hidden="true"></canvas>
-
     <div class="container">
       <!-- Modern Navigation Bar -->
       <header class="topbar">
         <a href="/" class="brand-wrapper">
           <div class="brand-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-              <line x1="12" y1="22.08" x2="12" y2="12"></line>
-            </svg>
+            <img src="/static/assets/logo.png" alt="Product Vision Logo" class="brand-logo-img" />
           </div>
           <div class="brand-title">
             <h1>Product Vision</h1>
@@ -68,18 +62,27 @@
             Lịch sử
           </a>
         </nav>
+
+        <div id="userProfileNav" class="user-profile-header"></div>
       </header>
 
-      <main class="panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12 6 12 12 16 14"></polyline>
-            </svg>
-            <span>Nhật Ký & Lịch Sử Phiên Đếm</span>
+      <!-- Clean Page Intro Header -->
+      <section class="page-intro">
+        <div class="intro-content">
+          <h2 class="intro-title">Nhật Ký & Lịch Sử Phiên Đếm</h2>
+          <p class="intro-description">
+            Tra cứu, tìm kiếm và xem lại kết quả các phiên làm việc từ video đã xử lý hoặc camera trực tiếp.
+          </p>
+        </div>
+      </section>
+
+      <main class="section-sheet">
+        <div class="sheet-header">
+          <div>
+            <h3 class="sheet-title">Danh Sách Các Phiên Đã Lưu</h3>
+            <p class="sheet-desc">Tra cứu chi tiết theo tên video hoặc mã định danh phiên</p>
           </div>
-          <span class="panel-title-badge" id="historyCountBadge">0 phiên lưu trữ</span>
+          <span class="sheet-badge" id="historyCountBadge">0 phiên lưu trữ</span>
         </div>
 
         <!-- Filter & Search Toolbar -->
@@ -93,10 +96,10 @@
           </div>
 
           <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="btn btn-secondary" id="filterAllBtn" style="padding: 7px 14px; font-size: 0.82rem;">Tất cả</button>
-            <button class="btn btn-secondary" id="filterVideoBtn" style="padding: 7px 14px; font-size: 0.82rem;">Chỉ Video</button>
-            <button class="btn btn-secondary" id="filterCameraBtn" style="padding: 7px 14px; font-size: 0.82rem;">Chỉ Camera</button>
-            <button class="btn btn-primary" id="refreshHistoryBtn" style="padding: 7px 14px; font-size: 0.82rem;">
+            <button class="btn btn-secondary btn-sm" id="filterAllBtn">Tất cả</button>
+            <button class="btn btn-secondary btn-sm" id="filterVideoBtn">Chỉ Video</button>
+            <button class="btn btn-secondary btn-sm" id="filterCameraBtn">Chỉ Camera</button>
+            <button class="btn btn-primary btn-sm" id="refreshHistoryBtn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="23 4 23 10 17 10"></polyline>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
@@ -134,7 +137,7 @@
     <!-- Toast Container -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <script src="/static/js/background.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/auth.js?v=3.6"></script>
   </body>
 </html>

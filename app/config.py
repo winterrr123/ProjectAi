@@ -29,6 +29,11 @@ class Settings:
         "YOLO_WORLD_CLASSES",
         "gói cà phê, chai nước, hộp sữa, lon nước ngọt, bánh kẹo, gói snack, điện thoại, máy tính, sách vở, balo, túi xách, thùng hộp"
     )
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-jwt-key-for-product-detection-ai")
+    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
     def __post_init__(self):
         self.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)

@@ -406,8 +406,8 @@ async function captureAndDetectFrame() {
   studioState.isProcessingFrame = true;
   studioState.frameCount++;
 
-  // Optimize payload size: Scale frame to 416px (matches YOLO imgsz 416) for high-accuracy inference & fast transfer
-  const maxDim = 416;
+  // Optimize payload size: Scale frame to 640px (standard YOLO imgsz 640) for high-accuracy inference & fast transfer
+  const maxDim = 640;
   let targetW = w;
   let targetH = h;
   if (w > maxDim || h > maxDim) {
@@ -425,7 +425,7 @@ async function captureAndDetectFrame() {
     offCanvas.height = targetH;
   }
   offCtx.drawImage(studioVideo, 0, 0, targetW, targetH);
-  const base64Data = offCanvas.toDataURL('image/jpeg', 0.60);
+  const base64Data = offCanvas.toDataURL('image/jpeg', 0.80);
 
   const startReq = performance.now();
 
@@ -541,9 +541,22 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
 
     if (studioState.activeTracks.has(trackId)) {
       const track = studioState.activeTracks.get(trackId);
-      // Large displacement check: snap directly to prevent dragging/flying box across screen
+      const dt = Math.max(16, now - track.lastSeenTime);
+      const rawVx1 = (x1 - track.targetX1) / dt;
+      const rawVy1 = (y1 - track.targetY1) / dt;
+      const rawVx2 = (x2 - track.targetX2) / dt;
+      const rawVy2 = (y2 - track.targetY2) / dt;
+
+      // Smooth velocity with EMA for continuous trajectory extrapolation
+      track.vx1 = track.vx1 !== undefined ? (track.vx1 * 0.4 + rawVx1 * 0.6) : rawVx1;
+      track.vy1 = track.vy1 !== undefined ? (track.vy1 * 0.4 + rawVy1 * 0.6) : rawVy1;
+      track.vx2 = track.vx2 !== undefined ? (track.vx2 * 0.4 + rawVx2 * 0.6) : rawVx2;
+      track.vy2 = track.vy2 !== undefined ? (track.vy2 * 0.4 + rawVy2 * 0.6) : rawVy2;
+
+      // Only hard-snap on massive jumps (e.g. video timeline seek > 35% canvas width)
       const jumpDist = Math.hypot(x1 - track.currX1, y1 - track.currY1);
-      if (jumpDist > 120) {
+      const snapThreshold = Math.max(250, (studioCanvas.width || 800) * 0.35);
+      if (jumpDist > snapThreshold) {
         track.currX1 = x1;
         track.currY1 = y1;
         track.currX2 = x2;
@@ -558,7 +571,7 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
       track.isCounted = isCounted;
       track.lastSeenTime = now;
     } else {
-      // New track: snap directly to position
+      // New track: initialize with zero velocity
       studioState.activeTracks.set(trackId, {
         id: trackId,
         className: det.class_name,
@@ -572,6 +585,10 @@ function handleDetectionResults(data, scaleX = 1, scaleY = 1) {
         targetY1: y1,
         targetX2: x2,
         targetY2: y2,
+        vx1: 0,
+        vy1: 0,
+        vx2: 0,
+        vy2: 0,
         lastSeenTime: now,
       });
     }
@@ -668,25 +685,25 @@ function renderCanvasLoop() {
 
   const now = performance.now();
 
-  // Clean up stale tracks first
+  // Clean up stale tracks: generous persistence (850ms) to completely eliminate flicker between network frames
   for (const [trackId, track] of studioState.activeTracks.entries()) {
     const age = now - track.lastSeenTime;
 
     // 1. Immediately remove if box is completely outside canvas bounds (disappears on exit)
-    if (track.currX2 <= 0 || track.currX1 >= w || track.currY2 <= 0 || track.currY1 >= h) {
+    if (track.currX2 <= -30 || track.currX1 >= w + 30 || track.currY2 <= -30 || track.currY1 >= h + 30) {
       studioState.activeTracks.delete(trackId);
       continue;
     }
 
-    // 2. Near screen edges (exiting conveyor / camera)
+    // 2. Near screen edges vs middle
     const isNearEdge =
       track.currX1 <= 15 ||
       track.currY1 <= 15 ||
       track.currX2 >= w - 15 ||
       track.currY2 >= h - 15;
 
-    // Fast cleanup: 100ms when near edge, 280ms otherwise
-    const maxAge = isNearEdge ? 100 : 280;
+    // High persistence (850ms, 450ms near edge) ensures box NEVER blinks between server responses
+    const maxAge = isNearEdge ? 450 : 850;
 
     if (age > maxAge) {
       studioState.activeTracks.delete(trackId);
@@ -694,8 +711,7 @@ function renderCanvasLoop() {
     }
   }
 
-  // Deduplicate overlapping tracks visually ONLY if true duplicate boxes (IoU > 0.65)
-  // (Prevents adjacent items on conveyor from deleting each other)
+  // Deduplicate overlapping tracks visually ONLY if true duplicate boxes (IoU > 0.70)
   const trackEntries = Array.from(studioState.activeTracks.entries());
   for (let i = 0; i < trackEntries.length; i++) {
     const [idA, trackA] = trackEntries[i];
@@ -715,7 +731,7 @@ function renderCanvasLoop() {
         const areaA = Math.max(1, (trackA.currX2 - trackA.currX1) * (trackA.currY2 - trackA.currY1));
         const areaB = Math.max(1, (trackB.currX2 - trackB.currX1) * (trackB.currY2 - trackB.currY1));
         const iou = interArea / (areaA + areaB - interArea);
-        if (iou > 0.65) {
+        if (iou > 0.70) {
           if (trackA.lastSeenTime < trackB.lastSeenTime) {
             studioState.activeTracks.delete(idA);
             break;
@@ -727,7 +743,7 @@ function renderCanvasLoop() {
     }
   }
 
-  // Render each active track
+  // Render each active track with forward motion projection
   studioState.activeTracks.forEach((track, trackId) => {
     const age = now - track.lastSeenTime;
     const isCounted = track.isCounted || studioState.seenTrackIds.has(trackId);
@@ -737,20 +753,27 @@ function renderCanvasLoop() {
       track.currY1 <= 15 ||
       track.currX2 >= w - 15 ||
       track.currY2 >= h - 15;
-    const maxAge = isNearEdge ? 100 : 280;
+    const maxAge = isNearEdge ? 450 : 850;
 
-    // Fade out smoothly during the final 80ms
+    // Fade out smoothly during the final 120ms
     let alpha = 1.0;
-    if (age > maxAge - 80) {
-      alpha = Math.max(0, (maxAge - age) / 80);
+    if (age > maxAge - 120) {
+      alpha = Math.max(0, (maxAge - age) / 120);
     }
 
-    // Responsive lerp directly toward server-reported target
-    const lerpFactor = 0.65;
-    track.currX1 += (track.targetX1 - track.currX1) * lerpFactor;
-    track.currY1 += (track.targetY1 - track.currY1) * lerpFactor;
-    track.currX2 += (track.targetX2 - track.currX2) * lerpFactor;
-    track.currY2 += (track.targetY2 - track.currY2) * lerpFactor;
+    // Forward velocity projection: seamlessly carries the box forward in sync with video motion
+    const elapsed = Math.min(300, now - track.lastSeenTime);
+    const forwardX1 = track.targetX1 + (track.vx1 || 0) * elapsed;
+    const forwardY1 = track.targetY1 + (track.vy1 || 0) * elapsed;
+    const forwardX2 = track.targetX2 + (track.vx2 || 0) * elapsed;
+    const forwardY2 = track.targetY2 + (track.vy2 || 0) * elapsed;
+
+    // Smooth lerp (factor 0.28) for butter-smooth 60fps tracking
+    const lerpFactor = 0.28;
+    track.currX1 += (forwardX1 - track.currX1) * lerpFactor;
+    track.currY1 += (forwardY1 - track.currY1) * lerpFactor;
+    track.currX2 += (forwardX2 - track.currX2) * lerpFactor;
+    track.currY2 += (forwardY2 - track.currY2) * lerpFactor;
 
     const x1 = Math.max(0, track.currX1);
     const y1 = Math.max(0, track.currY1);
