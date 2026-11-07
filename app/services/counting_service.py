@@ -26,6 +26,8 @@ class CountingService:
         - Confirmed objects are counted EXACTLY ONCE.
         - Stores spatial memory of all counted objects to prevent re-counting
           when tracker IDs switch, flicker, or drop.
+        - Uses Co-Presence Exclusion to prevent adjacent objects in the same frame
+          from falsely merging as spatial aliases.
         """
         self.min_hits = min_hits
         # Maps tracking_id -> appearance hit count
@@ -40,16 +42,55 @@ class CountingService:
         self.track_class_map: Dict[int, str] = {}
         # Accumulated count per class
         self.accumulated_by_class: DefaultDict[str, int] = defaultdict(int)
-        
+
         # Spatial memory of all counted objects:
-        # original_tid -> {"box": (x1, y1, x2, y2), "center": (cx, cy), "class_name": str}
+        # original_tid -> {"box": (x1, y1, x2, y2), "center": (cx, cy), "class_name": str, "last_seen_frame": int}
         self.counted_spatial_history: Dict[int, Dict] = {}
         # Alias map: new_flickered_tid -> original_counted_tid
         self.id_aliases: Dict[int, int] = {}
+        # Current video frame counter
+        self.current_frame: int = 0
 
-    def process(self, tracked_objects: Iterable[dict]) -> Dict[str, int]:
+    def get_canonical_id(self, tracking_id: int) -> int:
+        """Resolve canonical tracking ID through transitive aliases."""
+        visited: Set[int] = set()
+        curr = tracking_id
+        while curr in self.id_aliases and curr not in visited:
+            visited.add(curr)
+            curr = self.id_aliases[curr]
+        return curr
+
+    def update(self, active_detections: Iterable[dict], frame_number: Optional[int] = None) -> Dict[str, int]:
+        """
+        Public interface contract: update(active_detections, frame_number) -> Dict[str, int].
+        Updates active_detections in-place and returns new_counts by class.
+        """
+        return self.process(active_detections, frame_number=frame_number)
+
+    def process(self, tracked_objects: Iterable[dict], frame_number: Optional[int] = None) -> Dict[str, int]:
         new_counts: DefaultDict[str, int] = defaultdict(int)
-        if not tracked_objects:
+        if tracked_objects is None:
+            tracked_list = []
+        elif isinstance(tracked_objects, list):
+            tracked_list = tracked_objects
+        else:
+            tracked_list = list(tracked_objects)
+
+        # Advance / set frame number
+        if frame_number is not None:
+            self.current_frame = frame_number
+        else:
+            frame_candidates = [
+                item["frame_number"]
+                for item in tracked_list
+                if isinstance(item, dict) and item.get("frame_number") is not None
+            ]
+            if frame_candidates:
+                self.current_frame = max(frame_candidates)
+            else:
+                self.current_frame += 1
+
+        if not tracked_list:
             # Increment misses for all pending tracks
             pending_ids = [tid for tid in list(self.track_hits.keys()) if tid not in self.global_counted_track_ids]
             for tid in pending_ids:
@@ -60,9 +101,47 @@ class CountingService:
                     self.track_first_pos.pop(tid, None)
             return dict(new_counts)
 
+        # Filter out composite cluster boxes (boxes enclosing other tracked items in the same frame)
+        # and full-screen background false positives (> 50% frame area)
+        composite_indices: Set[int] = set()
+        for i, it1 in enumerate(tracked_list):
+            if "x1" not in it1 or "x2" not in it1:
+                continue
+            b1 = (float(it1["x1"]), float(it1["y1"]), float(it1["x2"]), float(it1["y2"]))
+            bw1 = max(0.0, b1[2] - b1[0])
+            bh1 = max(0.0, b1[3] - b1[1])
+            a1 = bw1 * bh1
+            # Full-screen / giant background box rejection
+            if bw1 > 1000 or (bw1 > 700 and bh1 > 280) or a1 > 500000:
+                composite_indices.add(i)
+                continue
+            for j, it2 in enumerate(tracked_list):
+                if i == j:
+                    continue
+                if "x1" not in it2 or "x2" not in it2:
+                    continue
+                b2 = (float(it2["x1"]), float(it2["y1"]), float(it2["x2"]), float(it2["y2"]))
+                a2 = max(1.0, (b2[2] - b2[0]) * (b2[3] - b2[1]))
+                if a1 > 1.6 * a2:
+                    ix1, iy1 = max(b1[0], b2[0]), max(b1[1], b2[1])
+                    ix2, iy2 = min(b1[2], b2[2]), min(b1[3], b2[3])
+                    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+                    if (inter / a2) > 0.45:
+                        composite_indices.add(i)
+                        break
+
+        filtered_items = [it for idx, it in enumerate(tracked_list) if idx not in composite_indices]
+
+        # Collect all raw tracking IDs currently visible in this frame
+        current_frame_raw_tids: Set[int] = {
+            item.get("tracking_id")
+            for item in filtered_items
+            if isinstance(item, dict) and item.get("tracking_id") is not None
+        }
+
         present_ids: Set[int] = set()
 
-        for item in tracked_objects:
+        for item in filtered_items:
             raw_tid = item.get("tracking_id")
             raw_class_name = item.get("class_name", "Unknown")
 
@@ -72,21 +151,30 @@ class CountingService:
                 continue
 
             # Resolve known alias if this ID was previously matched to a counted object
-            tracking_id = self.id_aliases.get(raw_tid, raw_tid)
+            tracking_id = self.get_canonical_id(raw_tid)
             item["tracking_id"] = tracking_id
 
-            has_box = "x1" in item and "y1" in item and "x2" in item and "y2" in item
-            if has_box:
+            # Parse bounding box robustly
+            if "box" in item and isinstance(item["box"], (list, tuple)) and len(item["box"]) >= 4:
+                curr_box = (float(item["box"][0]), float(item["box"][1]), float(item["box"][2]), float(item["box"][3]))
+                has_box = True
+            elif "x1" in item and "y1" in item and "x2" in item and "y2" in item:
                 curr_box = (float(item["x1"]), float(item["y1"]), float(item["x2"]), float(item["y2"]))
-                cx = (curr_box[0] + curr_box[2]) / 2.0
-                cy = (curr_box[1] + curr_box[3]) / 2.0
-                bw = curr_box[2] - curr_box[0]
-                bh = curr_box[3] - curr_box[1]
-                diag = math.hypot(bw, bh)
+                has_box = True
             else:
                 curr_box = (0.0, 0.0, 0.0, 0.0)
+                has_box = False
+
+            if has_box:
+                cx = (curr_box[0] + curr_box[2]) / 2.0
+                cy = (curr_box[1] + curr_box[3]) / 2.0
+                bw = max(1.0, curr_box[2] - curr_box[0])
+                bh = max(1.0, curr_box[3] - curr_box[1])
+                diag = math.hypot(bw, bh)
+            else:
                 cx, cy, diag = 0.0, 0.0, 0.0
 
+            present_ids.add(raw_tid)
             present_ids.add(tracking_id)
 
             # CASE A: Track ID is already in the global counted set
@@ -94,28 +182,56 @@ class CountingService:
                 item["class_name"] = self.track_class_map.get(tracking_id, raw_class_name)
                 item["is_counted"] = True
                 item["is_new"] = False
-                if has_box and tracking_id in self.counted_spatial_history:
-                    self.counted_spatial_history[tracking_id]["box"] = curr_box
-                    self.counted_spatial_history[tracking_id]["center"] = (cx, cy)
+                if tracking_id in self.counted_spatial_history:
+                    self.counted_spatial_history[tracking_id]["last_seen_frame"] = self.current_frame
+                    if has_box:
+                        self.counted_spatial_history[tracking_id]["box"] = curr_box
+                        self.counted_spatial_history[tracking_id]["center"] = (cx, cy)
                 continue
 
-            # CASE B: Track ID is NOT yet marked counted, but check if it spatially belongs
+            # CASE B: Track ID is NOT yet marked counted. Check if it spatially belongs
             # to an already-counted object (anti-duplicate Re-ID)
             matched_counted_id = None
             if has_box and self.counted_spatial_history:
+                # Co-Presence Exclusion: Identify all counted records active in this frame
+                # via OTHER detections. Two physically distinct objects co-present in the
+                # same frame can NEVER be aliases of each other.
+                other_frame_tids = current_frame_raw_tids - {raw_tid}
+                active_counted_in_frame: Set[int] = set()
+                for otid in other_frame_tids:
+                    active_counted_in_frame.add(otid)
+                    o_canon = self.get_canonical_id(otid)
+                    active_counted_in_frame.add(o_canon)
+
+                best_match_id = None
+                best_score = -1.0
+
                 for c_id, c_data in self.counted_spatial_history.items():
+                    # Co-Presence Exclusion
+                    if c_id in active_counted_in_frame:
+                        continue
+
+                    # Frame-based aging: only consider recent history within recovery window (<= 60 frames)
+                    last_seen = c_data.get("last_seen_frame", self.current_frame)
+                    if (self.current_frame - last_seen) > 60:
+                        continue
+
                     c_box = c_data["box"]
                     c_cx, c_cy = c_data["center"]
                     c_diag = math.hypot(c_box[2] - c_box[0], c_box[3] - c_box[1])
-                    avg_diag = max(20.0, (diag + c_diag) / 2.0)
-                    
+                    min_diag = min(diag, c_diag)
+
                     iou = _calc_iou(curr_box, c_box)
                     dist = math.hypot(cx - c_cx, cy - c_cy)
 
-                    # Match if significant IoU or center is within 1.2x object diagonal
-                    if iou > 0.15 or (iou > 0.05 and dist < avg_diag * 0.9) or (dist < avg_diag * 0.65):
-                        matched_counted_id = c_id
-                        break
+                    # IoU-gated condition: Require substantial overlap or moderate overlap with close proximity
+                    if iou > 0.25 or (iou > 0.10 and dist < min_diag * 0.40):
+                        score = iou * 10.0 - (dist / max(1.0, min_diag))
+                        if score > best_score:
+                            best_score = score
+                            best_match_id = c_id
+
+                matched_counted_id = best_match_id
 
             if matched_counted_id is not None:
                 # Link this flickered track ID to the already-counted physical object
@@ -124,6 +240,8 @@ class CountingService:
                 item["class_name"] = self.track_class_map.get(matched_counted_id, raw_class_name)
                 item["is_counted"] = True
                 item["is_new"] = False
+                # Update spatial history to current box to maintain tracker continuity
+                self.counted_spatial_history[matched_counted_id]["last_seen_frame"] = self.current_frame
                 if has_box:
                     self.counted_spatial_history[matched_counted_id]["box"] = curr_box
                     self.counted_spatial_history[matched_counted_id]["center"] = (cx, cy)
@@ -135,14 +253,15 @@ class CountingService:
 
             if tracking_id not in self.track_first_pos and has_box:
                 self.track_first_pos[tracking_id] = (cx, cy)
-            
+
             init_cx, init_cy = self.track_first_pos.get(tracking_id, (cx, cy))
             dist_moved = math.hypot(cx - init_cx, cy - init_cy)
             hits = self.track_hits[tracking_id]
 
             # Confirmation threshold:
-            # Require at least 4 stable hits (or 3 hits with noticeable flow motion)
-            is_confirmed = (hits >= self.min_hits and dist_moved >= 12.0) or (hits >= (self.min_hits + 1))
+            # Static cans (standing on a table or in a multi-pack) with hits >= min_hits are confirmed cleanly.
+            # Moving objects with noticeable flow motion (hits >= 2 and dist_moved >= 10.0) can also confirm.
+            is_confirmed = (hits >= self.min_hits) or (hits >= 2 and dist_moved >= 10.0)
 
             if is_confirmed:
                 # Confirmed object! Add to official count ONCE
@@ -154,6 +273,7 @@ class CountingService:
                         "box": curr_box,
                         "center": (cx, cy),
                         "class_name": raw_class_name,
+                        "last_seen_frame": self.current_frame,
                     }
                 item["is_counted"] = True
                 item["is_new"] = True
@@ -175,7 +295,7 @@ class CountingService:
         return dict(new_counts)
 
     def is_already_counted(self, tracking_id: int) -> bool:
-        canonical_id = self.id_aliases.get(tracking_id, tracking_id)
+        canonical_id = self.get_canonical_id(tracking_id)
         return canonical_id in self.global_counted_track_ids
 
     def get_total(self, counts: Dict[str, int]) -> int:
@@ -196,6 +316,7 @@ class CountingService:
         self.accumulated_by_class.clear()
         self.counted_spatial_history.clear()
         self.id_aliases.clear()
+        self.current_frame = 0
 
     def get_unique_track_ids(self) -> Dict[str, set]:
         res = defaultdict(set)

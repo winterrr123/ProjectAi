@@ -318,12 +318,13 @@ class YOLOService:
     @staticmethod
     def suppress_overlapping_boxes(detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Strict deduplication & NMS across all model outputs in the ensemble:
-        - Prioritizes specialist trained models (Người, Con Cá, Gói Cà Phê, Thùng Hộp, Nước Ngọt, Trà...) over generic base COCO detections.
-        - If two boxes have IoU > 0.25, keep only the higher-priority / higher-confidence one.
-        - If one box is mostly contained inside another (containment > 0.45), keep only one.
-        - If centers are within 40px and have overlap, merge them.
-        - Strictly prevents duplicate bounding boxes on the same physical object.
+        Intelligent deduplication & NMS across ensemble model outputs:
+        - Prioritizes specialist trained models over generic base COCO detections.
+        - Preserves distinct tracking IDs assigned by ByteTrack from the same model source (Track ID invariance).
+        - Suppresses true duplicate boxes (same physical object across models) with elevated IoU > 0.55.
+        - Uses scale-normalized center distance offsets (dx_rel, dy_rel) with center-guarded containment
+          (containment > 0.75 and dx_rel < 0.35 and dy_rel < 0.35) and coincident-center jitter deduplication
+          (IoU > 0.35 and dx_rel < 0.25 and dy_rel < 0.25) to preserve side-by-side and partially occluded cans.
         """
         if len(detections) <= 1:
             return detections
@@ -350,12 +351,28 @@ class YOLOService:
 
         for det in sorted_dets:
             box_a = (det["x1"], det["y1"], det["x2"], det["y2"])
-            area_a = max(1.0, (box_a[2] - box_a[0]) * (box_a[3] - box_a[1]))
+            w_a = max(1.0, box_a[2] - box_a[0])
+            h_a = max(1.0, box_a[3] - box_a[1])
+            area_a = w_a * h_a
+            ca_x, ca_y = (box_a[0] + box_a[2]) / 2.0, (box_a[1] + box_a[3]) / 2.0
+            tid_a = det.get("tracking_id")
+            src_a = det.get("model_source")
 
             is_duplicate = False
             for k in kept:
                 box_b = (k["x1"], k["y1"], k["x2"], k["y2"])
-                area_b = max(1.0, (box_b[2] - box_b[0]) * (box_b[3] - box_b[1]))
+                w_b = max(1.0, box_b[2] - box_b[0])
+                h_b = max(1.0, box_b[3] - box_b[1])
+                area_b = w_b * h_b
+                cb_x, cb_y = (box_b[0] + box_b[2]) / 2.0, (box_b[1] + box_b[3]) / 2.0
+                tid_b = k.get("tracking_id")
+                src_b = k.get("model_source")
+
+                # Track ID invariance: if both detections share the same model_source
+                # and have distinct, valid tracking_ids, skip duplicate suppression between them
+                # (ByteTrack already proved they are separate objects over temporal frames)
+                if tid_a is not None and tid_b is not None and tid_a != tid_b and src_a == src_b:
+                    continue
 
                 ix1 = max(box_a[0], box_b[0])
                 iy1 = max(box_a[1], box_b[1])
@@ -368,11 +385,30 @@ class YOLOService:
                 min_area = min(area_a, area_b)
                 containment = inter / min_area if min_area > 0 else 0.0
 
-                ca_x, ca_y = (box_a[0] + box_a[2]) / 2.0, (box_a[1] + box_a[3]) / 2.0
-                cb_x, cb_y = (box_b[0] + box_b[2]) / 2.0, (box_b[1] + box_b[3]) / 2.0
-                dist = ((ca_x - cb_x) ** 2 + (ca_y - cb_y) ** 2) ** 0.5
+                max_w = max(w_a, w_b)
+                max_h = max(h_a, h_b)
+                min_w = min(w_a, w_b)
+                min_h = min(h_a, h_b)
 
-                if iou > 0.25 or containment > 0.45 or (dist < 40.0 and iou > 0.10):
+                # Normalized relative center distance offsets
+                dx_rel = abs(ca_x - cb_x) / max_w
+                dy_rel = abs(ca_y - cb_y) / max_h
+                dx_rel_min = abs(ca_x - cb_x) / min_w
+                dy_rel_min = abs(ca_y - cb_y) / min_h
+
+                # 1. Definitive duplicate detection (same can detected across ensemble models)
+                if iou > 0.55:
+                    is_duplicate = True
+                    break
+
+                # 2. High containment (smaller box almost completely inside larger box)
+                # Guarded by center alignment to prevent dropping adjacent occluded cans
+                if containment > 0.75 and dx_rel < 0.35 and dy_rel < 0.35 and dx_rel_min < 0.35 and dy_rel_min < 0.35:
+                    is_duplicate = True
+                    break
+
+                # 3. Moderate IoU with nearly coincident centers (model jitter duplicate)
+                if iou > 0.35 and dx_rel < 0.25 and dy_rel < 0.25:
                     is_duplicate = True
                     break
 
