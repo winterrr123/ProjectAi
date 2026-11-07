@@ -20,25 +20,136 @@ from app.utils.drawing import draw_detection_overlay
 from app.utils.helpers import get_video_output_path, logger
 
 
-def is_matching_target(det_class_name: Optional[str], target_class: Optional[str]) -> bool:
+NOISE_CLASSES = {
+    "người", "person", "human", "chair", "couch", "bed", "dining table",
+    "table", "toilet", "sink", "bench", "con cá", "cá", "fish", "airplane",
+    "traffic light", "fire hydrant", "stop sign", "parking meter"
+}
+
+
+def is_matching_target(
+    det_class_name: Optional[str],
+    target_class: Optional[str],
+    target_name: Optional[str] = None
+) -> bool:
     """
-    Check if a detection class matches the user-specified target product visual class.
+    Check if a detection class matches the user-specified target product visual class or product name.
     Provides strict noise suppression for non-target objects (people, chairs, tables, other items).
+    Supports multi-model semantic mapping (supermarket drinks, COCO cups/bottles, custom products).
     """
     if not target_class or target_class.strip().lower() in ("all", "*", "tat ca", "tất cả"):
         return True
 
     det_lower = (det_class_name or "").lower().strip()
     tgt_lower = target_class.lower().strip()
+    name_lower = (target_name or "").lower().strip()
 
-    # Direct match or word boundary match
-    if det_lower == tgt_lower or re.search(r"\b" + re.escape(tgt_lower) + r"\b", det_lower):
-        return True
+    # Strict noise exclusion: never count background furniture, room fixtures or humans
+    if any(n in det_lower for n in NOISE_CLASSES) or det_lower in NOISE_CLASSES:
+        return False
 
-    # Normalized COCO/YOLO visual class matching
     norm_det = normalize_visual_class(det_lower)
     norm_tgt = normalize_visual_class(tgt_lower)
-    if norm_det not in ("product", "unknown") and norm_tgt not in ("product", "unknown") and norm_det == norm_tgt:
+
+    # Cross-container mutual exclusion:
+    # A can is NOT a bottle, and a bottle is NOT a can
+    if norm_tgt == "can" and (norm_det == "bottle" or "chai" in det_lower or "bottle" in det_lower):
+        return False
+    if norm_tgt == "bottle" and (norm_det == "can" or "lon" in det_lower or "can" in det_lower):
+        return False
+
+    # 1. Direct or substring match
+    if det_lower == tgt_lower or tgt_lower in det_lower or det_lower in tgt_lower:
+        return True
+
+    # 2. Normalized visual class exact match
+    if norm_det not in ("product", "unknown") and norm_det == norm_tgt:
+        return True
+
+    # 3. Can / Canned drink category matching (Sting can, Coca can, Red Bull, etc.)
+    # In retail models, canned drinks are detected as cola, sports-drink, or cup (COCO has no can class)
+    if norm_tgt == "can" or "lon" in tgt_lower or "lon" in name_lower:
+        can_matches = {
+            "can", "lon", "tin", "aluminum", "cola", "sports-drink", "cup",
+            "nước ngọt", "nước tăng lực", "tăng lực", "bia", "soda", "sting"
+        }
+        if any(k in det_lower for k in can_matches):
+            return True
+
+    # 4. Bottle / Bottled drink category matching
+    if norm_tgt == "bottle" or "chai" in tgt_lower or "chai" in name_lower:
+        bottle_matches = {
+            "bottle", "chai", "lọ", "water", "tea", "sports-drink", "cola",
+            "nước suối", "trà", "nước khoáng"
+        }
+        if any(k in det_lower for k in bottle_matches):
+            return True
+
+    # 5. Packaging / Box / Pouch category matching
+    if norm_tgt == "box" or any(k in tgt_lower or k in name_lower for k in ["box", "hộp", "thùng", "gói", "túi"]):
+        box_matches = {
+            "box", "hộp", "thùng", "gói", "túi", "carton", "package", "pouch",
+            "coffee", "gói cà phê", "bánh kẹo", "snack"
+        }
+        if any(k in det_lower for k in box_matches):
+            return True
+
+    # 6. Electronics / Phone category matching
+    if norm_tgt in ("cell phone", "phone") or any(k in tgt_lower or k in name_lower for k in ["điện thoại", "phone", "mobile"]):
+        phone_matches = {"cell phone", "phone", "điện thoại", "smartphone", "mobile", "laptop", "remote"}
+        if any(k in det_lower for k in phone_matches):
+            return True
+
+    # 7. Primary model generic product matching (trained class "Sản Phẩm")
+    if norm_det == "product" or "sản phẩm" in det_lower:
+        return True
+
+    return False
+
+    # 1. Direct or substring match
+    if det_lower == tgt_lower or tgt_lower in det_lower or det_lower in tgt_lower:
+        return True
+
+    # 2. Normalized COCO/YOLO visual class matching
+    norm_det = normalize_visual_class(det_lower)
+    norm_tgt = normalize_visual_class(tgt_lower)
+    if norm_det not in ("product", "unknown") and norm_det == norm_tgt:
+        return True
+
+    # 3. Beverage & Can/Bottle category matching (Sting, Coca, Beer, Water, Tea, Coffee cans/bottles)
+    is_tgt_beverage = (
+        norm_tgt in ("can", "bottle", "cup") or
+        any(k in tgt_lower for k in ["can", "lon", "chai", "bottle", "drink", "nước", "uống", "bia", "sting", "coca", "pepsi"]) or
+        any(k in name_lower for k in ["can", "lon", "chai", "bottle", "drink", "nước", "uống", "bia", "sting", "coca", "pepsi"])
+    )
+    is_det_beverage = (
+        norm_det in ("can", "bottle", "cup") or
+        any(k in det_lower for k in BEVERAGE_CLASSES)
+    )
+    if is_tgt_beverage and is_det_beverage:
+        return True
+
+    # 4. Packaging / Box / Pouch category matching
+    is_tgt_packaging = (
+        norm_tgt in ("box", "carton", "package") or
+        any(k in tgt_lower for k in ["box", "hộp", "thùng", "gói", "túi", "carton", "pouch", "bánh", "kẹo", "cà phê"]) or
+        any(k in name_lower for k in ["box", "hộp", "thùng", "gói", "túi", "carton", "pouch", "bánh", "kẹo", "cà phê"])
+    )
+    is_det_packaging = (
+        norm_det in ("box", "carton", "package") or
+        any(k in det_lower for k in PACKAGING_CLASSES)
+    )
+    if is_tgt_packaging and is_det_packaging:
+        return True
+
+    # 5. Electronics / Phone category matching
+    is_tgt_electronics = norm_tgt in ("cell phone", "phone") or any(k in tgt_lower or k in name_lower for k in ["điện thoại", "phone", "mobile"])
+    is_det_electronics = norm_det in ("cell phone", "phone") or any(k in det_lower for k in ELECTRONICS_CLASSES)
+    if is_tgt_electronics and is_det_electronics:
+        return True
+
+    # 6. Primary model generic product matching (trained class "Sản Phẩm")
+    if norm_det == "product" or "sản phẩm" in det_lower:
         return True
 
     return False
@@ -263,9 +374,9 @@ class VideoProcessingService:
 
         for det in detections:
             # Noise suppression: discard any object that doesn't match the selected sample visual class
-            if target_class:
-                matches = is_matching_target(det.get("class_name", ""), target_class) or (
-                    bool(det.get("raw_name")) and is_matching_target(det.get("raw_name", ""), target_class)
+            if target_class or target_name:
+                matches = is_matching_target(det.get("class_name", ""), target_class, target_name) or (
+                    bool(det.get("raw_name")) and is_matching_target(det.get("raw_name", ""), target_class, target_name)
                 )
                 if not matches:
                     continue
