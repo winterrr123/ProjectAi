@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -103,88 +104,154 @@ class YOLOService:
     def __init__(self, model_path: Optional[str] = None):
         self.model_path = model_path or settings.MODEL_PATH
         self.model: Optional[YOLO] = None
-        self.base_coco_model: Optional[YOLO] = None
-        self.custom_box_model: Optional[YOLO] = None
-        self.custom_coffee_model: Optional[YOLO] = None
-        self.custom_supermarket_model: Optional[YOLO] = None
-        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="yolo_infer")
+        self._base_coco_model: Optional[YOLO] = None
+        self._custom_box_model: Optional[YOLO] = None
+        self._custom_coffee_model: Optional[YOLO] = None
+        self._custom_supermarket_model: Optional[YOLO] = None
+        self._base_coco_attempted: bool = False
+        self._custom_box_attempted: bool = False
+        self._custom_coffee_attempted: bool = False
+        self._custom_supermarket_attempted: bool = False
+        self._lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="yolo_infer")
         self._tracker_initialized = False
         self._load_model_if_available()
 
+    def _warmup_model(self, model: Optional[YOLO]) -> None:
+        """Warm up model on dummy frame so first real inference has zero cold-start delay."""
+        if model is None:
+            return
+        try:
+            device = self.get_device()
+            dummy = np.zeros((360, 416, 3), dtype=np.uint8)
+            with torch.inference_mode():
+                model.predict(dummy, imgsz=416, device=device, verbose=False)
+        except Exception as e:
+            logger.warning("Model warmup warning: %s", e)
+
     def _load_model_if_available(self) -> None:
+        """Load and warm up ONLY the primary YOLO model at initialization to conserve GPU VRAM."""
         if not os.path.exists(self.model_path):
             logger.warning("Model not found at %s. Detection will be unavailable until the model is added.", self.model_path)
             return
 
         logger.info("Loading primary YOLO model from %s", self.model_path)
         self.model = YOLO(self.model_path)
+        self._warmup_model(self.model)
+        logger.info("Primary YOLO model loaded and warmed up successfully")
 
-        # 1. Base Universal COCO Model (80 classes: orange, bottle, cup, laptop, etc.)
-        # Provides universal general object recognition alongside specialist trained models
-        base_coco_candidates = [
-            settings.PROJECT_ROOT / "yolov8n.pt",
-            settings.PROJECT_ROOT / "models" / "best_backup.pt",
-        ]
-        for b_path in base_coco_candidates:
-            if b_path.exists():
-                try:
-                    logger.info("Loading universal base COCO model from %s", b_path)
-                    self.base_coco_model = YOLO(str(b_path))
-                    break
-                except Exception as e:
-                    logger.warning("Could not load base COCO model from %s: %s", b_path, e)
+    # --- Lazy Loading Helper Methods & Properties for Auxiliary Models ---
 
-        # 2. Specialist product box model
-        custom_weights_path = settings.PROJECT_ROOT / "runs" / "detect" / "train_box" / "weights" / "best.pt"
-        if custom_weights_path.exists():
-            try:
-                logger.info("Loading custom trained box model from %s", custom_weights_path)
-                self.custom_box_model = YOLO(str(custom_weights_path))
-            except Exception as e:
-                logger.warning("Could not load custom box model: %s", e)
+    def get_base_coco_model(self) -> Optional[YOLO]:
+        """Lazy-load the universal base COCO model on first demand."""
+        if not self._base_coco_attempted:
+            with self._lock:
+                if not self._base_coco_attempted:
+                    self._base_coco_attempted = True
+                    base_coco_candidates = [
+                        settings.PROJECT_ROOT / "yolov8n.pt",
+                        settings.PROJECT_ROOT / "models" / "best_backup.pt",
+                    ]
+                    for b_path in base_coco_candidates:
+                        if b_path.exists():
+                            try:
+                                logger.info("Lazy-loading universal base COCO model from %s", b_path)
+                                self._base_coco_model = YOLO(str(b_path))
+                                self._warmup_model(self._base_coco_model)
+                                break
+                            except Exception as e:
+                                logger.warning("Could not load base COCO model from %s: %s", b_path, e)
+        return self._base_coco_model
 
-        # 3. Specialist conveyor coffee bag model
-        coffee_weights_candidates = [
-            settings.PROJECT_ROOT / "models" / "coffee_best.pt",
-            settings.PROJECT_ROOT / "runs" / "detect" / "train_coffee_v2" / "weights" / "best.pt",
-            settings.PROJECT_ROOT / "runs" / "detect" / "train_coffee" / "weights" / "best.pt",
-        ]
-        for c_path in coffee_weights_candidates:
-            if c_path.exists():
-                try:
-                    logger.info("Loading custom coffee model from %s", c_path)
-                    self.custom_coffee_model = YOLO(str(c_path))
-                    break
-                except Exception as e:
-                    logger.warning("Could not load coffee model from %s: %s", c_path, e)
+    @property
+    def base_coco_model(self) -> Optional[YOLO]:
+        return self.get_base_coco_model()
 
-        # 4. Specialist supermarket drinks model
-        supermarket_path = settings.PROJECT_ROOT / "models" / "supermarket_lab605.pt"
-        if supermarket_path.exists():
-            try:
-                logger.info("Loading supermarket model from %s", supermarket_path)
-                self.custom_supermarket_model = YOLO(str(supermarket_path))
-            except Exception as e:
-                logger.warning("Could not load supermarket model: %s", e)
+    @base_coco_model.setter
+    def base_coco_model(self, value: Optional[YOLO]) -> None:
+        self._base_coco_model = value
+        self._base_coco_attempted = True
 
-        # Warm up models on dummy frame so first frame has zero cold-start delay
-        try:
-            device = self.get_device()
-            dummy = np.zeros((360, 416, 3), dtype=np.uint8)
-            with torch.inference_mode():
-                if self.model is not None:
-                    self.model.predict(dummy, imgsz=416, device=device, verbose=False)
-                if self.base_coco_model is not None:
-                    self.base_coco_model.predict(dummy, imgsz=416, device=device, verbose=False)
-                if self.custom_box_model is not None:
-                    self.custom_box_model.predict(dummy, imgsz=416, device=device, verbose=False)
-                if self.custom_coffee_model is not None:
-                    self.custom_coffee_model.predict(dummy, imgsz=416, device=device, verbose=False)
-                if self.custom_supermarket_model is not None:
-                    self.custom_supermarket_model.predict(dummy, imgsz=416, device=device, verbose=False)
-            logger.info("YOLO multi-model ensemble warmed up successfully")
-        except Exception as e:
-            logger.warning("Model warmup warning: %s", e)
+    def get_custom_box_model(self) -> Optional[YOLO]:
+        """Lazy-load the specialist box/carton model on first demand."""
+        if not self._custom_box_attempted:
+            with self._lock:
+                if not self._custom_box_attempted:
+                    self._custom_box_attempted = True
+                    custom_weights_path = settings.PROJECT_ROOT / "runs" / "detect" / "train_box" / "weights" / "best.pt"
+                    if custom_weights_path.exists():
+                        try:
+                            logger.info("Lazy-loading custom trained box model from %s", custom_weights_path)
+                            self._custom_box_model = YOLO(str(custom_weights_path))
+                            self._warmup_model(self._custom_box_model)
+                        except Exception as e:
+                            logger.warning("Could not load custom box model: %s", e)
+        return self._custom_box_model
+
+    @property
+    def custom_box_model(self) -> Optional[YOLO]:
+        return self.get_custom_box_model()
+
+    @custom_box_model.setter
+    def custom_box_model(self, value: Optional[YOLO]) -> None:
+        self._custom_box_model = value
+        self._custom_box_attempted = True
+
+    def get_custom_coffee_model(self) -> Optional[YOLO]:
+        """Lazy-load the specialist coffee bag model on first demand."""
+        if not self._custom_coffee_attempted:
+            with self._lock:
+                if not self._custom_coffee_attempted:
+                    self._custom_coffee_attempted = True
+                    coffee_weights_candidates = [
+                        settings.PROJECT_ROOT / "models" / "coffee_best.pt",
+                        settings.PROJECT_ROOT / "runs" / "detect" / "train_coffee_v2" / "weights" / "best.pt",
+                        settings.PROJECT_ROOT / "runs" / "detect" / "train_coffee" / "weights" / "best.pt",
+                    ]
+                    for c_path in coffee_weights_candidates:
+                        if c_path.exists():
+                            try:
+                                logger.info("Lazy-loading custom coffee model from %s", c_path)
+                                self._custom_coffee_model = YOLO(str(c_path))
+                                self._warmup_model(self._custom_coffee_model)
+                                break
+                            except Exception as e:
+                                logger.warning("Could not load coffee model from %s: %s", c_path, e)
+        return self._custom_coffee_model
+
+    @property
+    def custom_coffee_model(self) -> Optional[YOLO]:
+        return self.get_custom_coffee_model()
+
+    @custom_coffee_model.setter
+    def custom_coffee_model(self, value: Optional[YOLO]) -> None:
+        self._custom_coffee_model = value
+        self._custom_coffee_attempted = True
+
+    def get_custom_supermarket_model(self) -> Optional[YOLO]:
+        """Lazy-load the specialist supermarket drinks model on first demand."""
+        if not self._custom_supermarket_attempted:
+            with self._lock:
+                if not self._custom_supermarket_attempted:
+                    self._custom_supermarket_attempted = True
+                    supermarket_path = settings.PROJECT_ROOT / "models" / "supermarket_lab605.pt"
+                    if supermarket_path.exists():
+                        try:
+                            logger.info("Lazy-loading supermarket model from %s", supermarket_path)
+                            self._custom_supermarket_model = YOLO(str(supermarket_path))
+                            self._warmup_model(self._custom_supermarket_model)
+                        except Exception as e:
+                            logger.warning("Could not load supermarket model: %s", e)
+        return self._custom_supermarket_model
+
+    @property
+    def custom_supermarket_model(self) -> Optional[YOLO]:
+        return self.get_custom_supermarket_model()
+
+    @custom_supermarket_model.setter
+    def custom_supermarket_model(self, value: Optional[YOLO]) -> None:
+        self._custom_supermarket_model = value
+        self._custom_supermarket_attempted = True
 
     def _extract_boxes(
         self,
@@ -237,6 +304,7 @@ class YOLOService:
                     "tracking_id": track_id,
                     "class_id": final_cls_id,
                     "class_name": final_name,
+                    "raw_name": raw_name.lower(),
                     "confidence": round(conf, 2),
                     "x1": bx1,
                     "y1": by1,
@@ -550,7 +618,10 @@ class YOLOService:
 
     def reset_tracker(self) -> None:
         """Reset the YOLO built-in tracker state for all tracking models."""
-        for m in (self.model, self.base_coco_model):
+        models_to_reset = [self.model]
+        if self._base_coco_model is not None:
+            models_to_reset.append(self._base_coco_model)
+        for m in models_to_reset:
             if m is not None:
                 try:
                     if hasattr(m, "predictor") and m.predictor is not None:

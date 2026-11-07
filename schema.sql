@@ -52,3 +52,16 @@ CREATE TABLE IF NOT EXISTS product_counts (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_session_count FOREIGN KEY (session_id) REFERENCES detection_sessions(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS sample_products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    brand VARCHAR(255) NULL,
+    category VARCHAR(255) NULL,
+    visual_class VARCHAR(100) NOT NULL DEFAULT 'product',
+    sample_image_url MEDIUMTEXT NULL,
+    specs VARCHAR(255) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sample_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);

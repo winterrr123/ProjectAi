@@ -23,7 +23,7 @@ class Settings:
     MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", "524288000"))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
     VISION_ENGINE = os.getenv("VISION_ENGINE", "standard")  # 'standard', 'yolo_world', 'hybrid'
     YOLO_WORLD_CLASSES = os.getenv(
         "YOLO_WORLD_CLASSES",
@@ -35,9 +35,10 @@ class Settings:
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
-    def __post_init__(self):
+    def __init__(self):
         self.UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
         self.OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+        (self.UPLOAD_FOLDER / "samples").mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

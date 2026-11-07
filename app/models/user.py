@@ -19,3 +19,4 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     sessions = relationship("DetectionSession", back_populates="user", cascade="all, delete-orphan")
+    samples = relationship("SampleProduct", back_populates="user", cascade="all, delete-orphan")

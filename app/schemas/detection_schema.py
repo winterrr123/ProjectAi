@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 class DetectionRequest(BaseModel):
     session_type: str = Field(default="VIDEO")
     video_name: Optional[str] = None
+    target_class: Optional[str] = None
+    target_name: Optional[str] = None
 
 
 class DetectionResponse(BaseModel):
@@ -29,6 +31,8 @@ class FrameDetectionPayload(BaseModel):
     reset: bool = Field(default=False)
     session_id: Optional[str] = None
     source: Optional[str] = Field(default="upload", description="'upload' or 'camera'")
+    target_class: Optional[str] = None
+    target_name: Optional[str] = None
 
 
 class SaveLiveSessionPayload(BaseModel):
@@ -36,3 +40,12 @@ class SaveLiveSessionPayload(BaseModel):
     video_name: str = Field(default="Live Video Session")
     total_objects: int = Field(default=0)
     by_class: Dict[str, int] = Field(default_factory=dict)
+
+
+class ExportExcelRequest(BaseModel):
+    session_id: Optional[int] = None
+    video_name: Optional[str] = "Live_Counting_Session.mp4"
+    total_count: Optional[int] = 0
+    by_class: Optional[Dict[str, int]] = Field(default_factory=dict)
+    target_name: Optional[str] = None
+    detections: Optional[list] = None

@@ -3,141 +3,133 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Lịch Sử Phiên Nhận Diện - Product Vision</title>
+    <title>Lịch sử - Product Vision</title>
     <link rel="icon" type="image/png" href="/static/assets/logo.png" />
-    <link rel="stylesheet" href="/static/css/style.css?v=4.1" />
+    <link rel="stylesheet" href="/static/css/style.css?v=5.0" />
   </head>
   <body>
-    <div class="container">
-      <!-- Modern Navigation Bar -->
-      <header class="topbar">
-        <a href="/" class="brand-wrapper">
-          <div class="brand-icon">
-            <img src="/static/assets/logo.png" alt="Product Vision Logo" class="brand-logo-img" />
-          </div>
-          <div class="brand-title">
-            <h1>Product Vision</h1>
-            <span>Nhật Ký & Lịch Sử</span>
-          </div>
-        </a>
+    <div class="app-shell">
+      <!-- Sidebar trái cố định -->
+      <aside class="app-sidebar">
+        <div class="sidebar-header">
+          <a href="/" class="sidebar-brand">
+            <div class="brand-icon-box">
+              <img src="/static/assets/logo.png" alt="Product Vision" />
+            </div>
+            <div class="brand-text">
+              <span class="brand-title">Product Vision</span>
+              <span class="brand-subtitle">Hệ thống đếm sản phẩm</span>
+            </div>
+          </a>
+        </div>
 
-        <nav class="nav-actions">
-          <a href="/" class="nav-link">
+        <nav class="sidebar-nav">
+          <a href="/" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="7" height="7"></rect>
               <rect x="14" y="3" width="7" height="7"></rect>
               <rect x="14" y="14" width="7" height="7"></rect>
               <rect x="3" y="14" width="7" height="7"></rect>
             </svg>
-            Tổng quan
+            <span>Tổng quan</span>
           </a>
-          <a href="/upload" class="nav-link">
+          <a href="/upload" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="17 8 12 3 7 8"></polyline>
               <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
-            Đếm qua Video
+            <span>Đếm qua video</span>
           </a>
-          <a href="/camera" class="nav-link">
+          <a href="/camera" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
               <circle cx="12" cy="13" r="4"></circle>
             </svg>
-            Live Camera
+            <span>Camera trực tiếp</span>
           </a>
-          <a href="/statistics" class="nav-link">
+          <a href="/statistics" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="20" x2="18" y2="10"></line>
               <line x1="12" y1="20" x2="12" y2="4"></line>
               <line x1="6" y1="20" x2="6" y2="14"></line>
             </svg>
-            Thống kê
+            <span>Thống kê</span>
           </a>
-          <a href="/history" class="nav-link active">
+          <a href="/history" class="nav-item active">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"></circle>
               <polyline points="12 6 12 12 16 14"></polyline>
             </svg>
-            Lịch sử
+            <span>Lịch sử</span>
           </a>
         </nav>
 
-        <div id="userProfileNav" class="user-profile-header"></div>
-      </header>
-
-      <!-- Clean Page Intro Header -->
-      <section class="page-intro">
-        <div class="intro-content">
-          <h2 class="intro-title">Nhật Ký & Lịch Sử Phiên Đếm</h2>
-          <p class="intro-description">
-            Tra cứu, tìm kiếm và xem lại kết quả các phiên làm việc từ video đã xử lý hoặc camera trực tiếp.
-          </p>
+        <div class="sidebar-footer">
+          <div id="userProfileNav" class="user-profile-slot"></div>
         </div>
-      </section>
+      </aside>
 
-      <main class="section-sheet">
-        <div class="sheet-header">
-          <div>
-            <h3 class="sheet-title">Danh Sách Các Phiên Đã Lưu</h3>
-            <p class="sheet-desc">Tra cứu chi tiết theo tên video hoặc mã định danh phiên</p>
-          </div>
-          <span class="sheet-badge" id="historyCountBadge">0 phiên lưu trữ</span>
-        </div>
-
-        <!-- Filter & Search Toolbar -->
-        <div class="table-toolbar">
-          <div class="search-box">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input type="text" id="historySearchInput" placeholder="Tìm theo tên video hoặc mã phiên..." />
+      <!-- Nội dung chính -->
+      <main class="app-main">
+        <div class="content-wrap">
+          <div class="page-header">
+            <div class="page-header-text">
+              <h1 class="page-title">Lịch sử</h1>
+              <p class="page-desc">Tra cứu, tìm kiếm và xem lại kết quả các phiên làm việc từ video và camera.</p>
+            </div>
+            <div class="page-header-actions">
+              <span class="status-tag" id="historyCountBadge">0 phiên</span>
+            </div>
           </div>
 
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="btn btn-secondary btn-sm" id="filterAllBtn">Tất cả</button>
-            <button class="btn btn-secondary btn-sm" id="filterVideoBtn">Chỉ Video</button>
-            <button class="btn btn-secondary btn-sm" id="filterCameraBtn">Chỉ Camera</button>
-            <button class="btn btn-primary btn-sm" id="refreshHistoryBtn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-              </svg>
-              Làm mới
-            </button>
-          </div>
-        </div>
+          <div class="card" style="padding: 16px;">
+            <!-- Thanh công cụ tìm kiếm và lọc -->
+            <div class="toolbar">
+              <input type="text" id="historySearchInput" class="search-input" placeholder="Tìm theo tên video hoặc mã phiên..." />
 
-        <!-- Responsive History Table -->
-        <div class="table-responsive">
-          <table class="modern-table">
-            <thead>
-              <tr>
-                <th>Mã Phiên</th>
-                <th>Phương Thức</th>
-                <th>Nguồn Dữ Liệu</th>
-                <th>Thời Gian Bắt Đầu</th>
-                <th>Thời Gian Kết Thúc</th>
-                <th>Tổng Số Lượng</th>
-              </tr>
-            </thead>
-            <tbody id="historyRows">
-              <tr>
-                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">
-                  Đang tải nhật ký lịch sử...
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <button class="btn btn-primary btn-sm" id="filterAllBtn">Tất cả</button>
+                <button class="btn btn-secondary btn-sm" id="filterVideoBtn">Chỉ video</button>
+                <button class="btn btn-secondary btn-sm" id="filterCameraBtn">Chỉ camera</button>
+                <button class="btn btn-secondary btn-sm" id="refreshHistoryBtn">
+                  Làm mới
+                </button>
+              </div>
+            </div>
+
+            <!-- Bảng lịch sử -->
+            <div class="table-responsive" style="margin-top: 10px;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th style="width: 80px;">Mã</th>
+                    <th style="width: 90px;">Nguồn</th>
+                    <th>Tên tệp</th>
+                    <th style="width: 170px;">Thời gian bắt đầu</th>
+                    <th style="width: 170px;">Thời gian kết thúc</th>
+                    <th style="width: 100px; text-align: right;">Số lượng</th>
+                    <th style="width: 80px; text-align: center;">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="historyRows">
+                  <tr>
+                    <td colspan="7" class="table-empty">
+                      Đang tải nhật ký lịch sử…
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </main>
     </div>
 
-    <!-- Toast Container -->
+    <!-- Toast container -->
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="/static/js/dashboard.js"></script>
-    <script src="/static/js/auth.js?v=3.6"></script>
+    <script src="/static/js/auth.js?v=5.0"></script>
   </body>
 </html>

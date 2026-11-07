@@ -62,6 +62,7 @@ const categoryCountBadge = document.getElementById('categoryCountBadge');
 const categoryList = document.getElementById('categoryList');
 const feedList = document.getElementById('feedList');
 const saveSessionBtn = document.getElementById('saveSessionBtn');
+const exportExcelBtn = document.getElementById('exportExcelBtn');
 const serverProcessBtn = document.getElementById('serverProcessBtn');
 
 // Batch Processing Progress
@@ -236,6 +237,9 @@ studioVideo.addEventListener('timeupdate', () => {
 studioVideo.addEventListener('ended', () => {
   pauseVideo();
   showToast('Đã phát hết video! Đã nhận diện và đếm toàn bộ sản phẩm.', 'success');
+  if (studioState.totalCount > 0) {
+    showToast('Đếm xong! Bạn có thể nhấn nút "Xuất báo cáo Excel" để tải file thống kê.', 'info');
+  }
 });
 
 function updateTimeDisplay() {
@@ -335,7 +339,7 @@ function initDetectWebSocket() {
     detectSocket = new WebSocket(wsUrl);
     detectSocket.onopen = () => {
       isSocketConnected = true;
-      console.log('⚡ WebSocket AI Detection connected');
+      console.log('WebSocket AI Detection connected');
     };
     detectSocket.onmessage = (event) => {
       try {
@@ -443,18 +447,22 @@ async function captureAndDetectFrame() {
           }
         }, 1000);
       });
+      const activeTarget = getActiveTarget();
       detectSocket.send(JSON.stringify({
         type: 'frame',
         image: base64Data,
         frame_number: studioState.frameCount,
         reset: false,
         source: 'video',
+        target_class: activeTarget ? activeTarget.visual_class : null,
+        target_name: activeTarget ? activeTarget.product_name : null,
       }));
       data = await wsPromise;
     }
 
     // Fallback path: HTTP POST if WS was unavailable or timed out
     if (!data) {
+      const activeTarget = getActiveTarget();
       const res = await fetch('/api/detect/frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -463,6 +471,8 @@ async function captureAndDetectFrame() {
           frame_number: studioState.frameCount,
           reset: false,
           source: 'video',
+          target_class: activeTarget ? activeTarget.visual_class : null,
+          target_name: activeTarget ? activeTarget.product_name : null,
         }),
       });
       if (res.ok) {
@@ -630,20 +640,12 @@ function updateCategoryBreakdown(counts, total) {
 // Add Item to Activity Feed (Only for newly counted products)
 function addFeedItem(item) {
   const timeStr = formatSeconds(studioVideo.currentTime);
-  const color = '#10b981';
 
   const feedDiv = document.createElement('div');
   feedDiv.className = 'feed-item';
-  feedDiv.style.borderLeftColor = color;
   feedDiv.innerHTML = `
-    <div>
-      <span class="time">[${timeStr}]</span>
-      <span class="label" style="margin-left: 6px; font-weight: 700;">Sản phẩm #${item.tracking_id}</span>
-      <span style="font-size:0.76rem; color:var(--mint); font-weight:700; margin-left:6px;">✓ ĐÃ ĐẾM</span>
-    </div>
-    <div style="display: flex; align-items: center; gap: 6px;">
-      <span class="conf" style="color:var(--mint); font-weight:700; font-size: 0.8rem;">#ID:${item.tracking_id}</span>
-    </div>
+    <span class="feed-name">Sản phẩm #${item.tracking_id}</span>
+    <span class="feed-time">${timeStr}</span>
   `;
 
   // Prepend to list
@@ -816,25 +818,21 @@ function renderCanvasLoop() {
     ctx.moveTo(x2 - cornerLen, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - cornerLen);
     ctx.stroke();
 
-    // Floating Label Tag: Clean Precision Counting Display
-    const statusText = isCounted ? '✓ ' : '';
-    const label = `${statusText}Sản phẩm #${trackId}`;
+    // Clean Flat Label Tag
+    const label = `Sản phẩm #${trackId}`;
 
-    ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.font = `500 ${fontSize}px "Inter", sans-serif`;
     const textMetrics = ctx.measureText(label);
-    const tagW = textMetrics.width + 16 * scaleFactor;
-    const tagH = 22 * scaleFactor;
+    const tagW = textMetrics.width + 10 * scaleFactor;
+    const tagH = 18 * scaleFactor;
     const tagX = x1;
-    const tagY = Math.max(0, y1 - tagH - 3);
-    const tagRadius = 6 * scaleFactor;
+    const tagY = Math.max(0, y1 - tagH);
 
-    // Tag background with clean rounded corners
     ctx.fillStyle = color;
-    roundRect(ctx, tagX, tagY, tagW, tagH, tagRadius, true, false);
+    ctx.fillRect(tagX, tagY, tagW, tagH);
 
-    // Tag text
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(label, tagX + 8 * scaleFactor, tagY + 15 * scaleFactor);
+    ctx.fillText(label, tagX + 5 * scaleFactor, tagY + 13 * scaleFactor);
 
     ctx.restore();
   });
@@ -930,7 +928,63 @@ saveSessionBtn.addEventListener('click', async () => {
 });
 
 // ==========================================================================
-// Server Batch Processing & MP4 Export
+// Export Excel Report Directly from Live Counting
+// ==========================================================================
+if (exportExcelBtn) {
+  exportExcelBtn.addEventListener('click', async () => {
+    if (studioState.totalCount === 0) {
+      showToast('Chưa có sản phẩm nào được đếm để xuất báo cáo!', 'warning');
+      return;
+    }
+
+    const originalHtml = exportExcelBtn.innerHTML;
+    exportExcelBtn.disabled = true;
+    exportExcelBtn.textContent = 'Đang tạo Excel…';
+
+    try {
+      const activeTarget = getActiveTarget();
+      const payload = {
+        video_name: studioState.filename || 'Live_Video_Session.mp4',
+        total_count: studioState.totalCount,
+        by_class: studioState.byClass,
+        target_name: activeTarget ? activeTarget.product_name : null,
+      };
+
+      const res = await fetch('/api/video/export-excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || 'Không thể tạo file Excel');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const cleanName = (studioState.filename || 'Bao_Cao_Kiem_Dem').replace(/\.[^/.]+$/, '');
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      a.download = `Bao_Cao_Kiem_Dem_${cleanName}_${dateStr}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      showToast('Đã tải xuống báo cáo Excel thành công!', 'success');
+    } catch (err) {
+      showToast(`Lỗi xuất Excel: ${err.message}`, 'error');
+    } finally {
+      exportExcelBtn.disabled = false;
+      exportExcelBtn.innerHTML = originalHtml;
+    }
+  });
+}
+
+// ==========================================================================
+// Server Batch Processing & Excel Report Export
 // ==========================================================================
 serverProcessBtn.addEventListener('click', async () => {
   const targetVideo = studioState.serverFilename || studioState.filename;
@@ -955,19 +1009,22 @@ serverProcessBtn.addEventListener('click', async () => {
         if (pData.status === 'processing' && pData.percent) {
           updateBatchStep(3, pData.percent, pData.message || `Đang nhận diện khung hình ${pData.current_frame}/${pData.total_frames}...`);
         } else if (pData.status === 'completed') {
-          updateBatchStep(4, 100, pData.message || 'Xử lý hoàn tất! Đang hoàn tất video MP4...');
+          updateBatchStep(4, 100, pData.message || 'Xử lý hoàn tất! Đang tạo báo cáo Excel...');
         }
       }
     } catch (_) {}
   }, 600);
 
   try {
+    const activeTarget = getActiveTarget();
     const res = await fetch('/api/video/process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_type: 'VIDEO',
         video_name: targetVideo,
+        target_class: activeTarget ? activeTarget.visual_class : null,
+        target_name: activeTarget ? activeTarget.product_name : null,
       }),
     });
 
@@ -977,16 +1034,17 @@ serverProcessBtn.addEventListener('click', async () => {
     }
 
     clearInterval(progressTimer);
-    updateBatchStep(4, 100, 'Xử lý hoàn tất! Video MP4 đã được xuất thành công.');
-    showToast('Xuất video nhận diện hoàn tất!', 'success');
+    updateBatchStep(4, 100, 'Xử lý hoàn tất! Báo cáo Excel đã được xuất thành công.');
+    showToast('Tạo báo cáo Excel kiểm đếm hoàn tất!', 'success');
 
-    const outVideo = data.output_video || data.output_path || '';
-    const outFilename = outVideo.split(/[\\/]/).pop();
+    const outExcel = data.output_excel || '';
+    const outFilename = outExcel || (data.output_video ? data.output_video.replace(/\.[^/.]+$/, '.xlsx') : 'Bao_Cao_Kiem_Dem.xlsx');
 
     if (outFilename) {
       const downloadUrl = `/api/video/output/${encodeURIComponent(outFilename)}`;
       downloadProcessedBtn.href = downloadUrl;
       downloadProcessedBtn.download = outFilename;
+      downloadProcessedBtn.textContent = 'Tải báo cáo Excel (.xlsx)';
       batchDownloadArea.style.display = 'flex';
     }
   } catch (err) {
@@ -1128,3 +1186,205 @@ window.inspectVideoTrack = function (trackId) {
     window.VisionHub.inspectProductCrop(cropBase64);
   }
 };
+
+/* ==========================================================================
+   TARGETED PRODUCT LOCKED-IN STUDIO LOGIC
+   ========================================================================== */
+
+function getActiveTarget() {
+  try {
+    const str = localStorage.getItem('activeTargetProduct');
+    if (!str) return null;
+    const parsed = JSON.parse(str);
+    return (parsed && parsed.product_name) ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function renderTargetBanner() {
+  const mount = document.getElementById('activeTargetBannerContainer');
+  if (!mount) return;
+
+  const target = getActiveTarget();
+  if (target) {
+    const visualClass = target.visual_class || 'Sản phẩm';
+    mount.innerHTML = `
+      <div class="target-card">
+        <div class="target-card-main">
+          <div class="target-key-val">
+            <span class="target-label">Mục tiêu đang chọn:</span>
+            <span class="target-value">${target.product_name}</span>
+          </div>
+          <div class="target-meta">
+            <span>Loại: ${visualClass}</span>
+            <span>Hãng: ${target.brand || 'Chưa rõ'}</span>
+            <span>Bộ lọc: Chỉ đếm mặt hàng này</span>
+          </div>
+        </div>
+        <div class="target-card-actions">
+          <button class="btn btn-secondary btn-sm" id="btnOpenTargetSwitcher">Đổi mục tiêu</button>
+          <button class="btn btn-secondary btn-sm" id="btnClearTarget">Bỏ chọn</button>
+          <a href="/camera" class="btn btn-secondary btn-sm">Chụp mẫu mới</a>
+        </div>
+      </div>
+    `;
+  } else {
+    mount.innerHTML = `
+      <div class="target-card target-card-empty">
+        <div class="target-card-main">
+          <div class="target-key-val">
+            <span class="target-label">Chế độ đếm:</span>
+            <span class="target-value">Đếm tổng quát (chưa chọn mẫu)</span>
+          </div>
+          <p class="target-hint">Để chỉ đếm một sản phẩm cụ thể và bỏ qua các vật khác, hãy chọn mẫu từ thư viện hoặc chụp qua camera.</p>
+        </div>
+        <div class="target-card-actions">
+          <button class="btn btn-secondary btn-sm" id="btnOpenTargetSwitcher">Chọn từ thư viện</button>
+          <a href="/camera" class="btn btn-primary btn-sm">Chụp mẫu qua camera</a>
+        </div>
+      </div>
+    `;
+  }
+
+  const btnOpen = document.getElementById('btnOpenTargetSwitcher');
+  if (btnOpen) {
+    btnOpen.addEventListener('click', openTargetSwitcherModal);
+  }
+  const btnClear = document.getElementById('btnClearTarget');
+  if (btnClear) {
+    btnClear.addEventListener('click', clearStudioTarget);
+  }
+}
+
+// Modal Quick Switcher
+const targetSwitcherModal = document.getElementById('targetSwitcherModal');
+const closeSwitcherModalBtn = document.getElementById('closeSwitcherModalBtn');
+const targetSwitcherList = document.getElementById('targetSwitcherList');
+
+window.closeTargetSwitcherModal = function() {
+  if (targetSwitcherModal) targetSwitcherModal.style.display = 'none';
+};
+
+async function openTargetSwitcherModal() {
+  if (!targetSwitcherModal) return;
+  targetSwitcherModal.style.display = 'flex';
+  targetSwitcherList.innerHTML = '<div class="empty-state">Đang tải thư viện mẫu...</div>';
+
+  try {
+    const res = await fetch('/api/vision/samples');
+    if (!res.ok) throw new Error(`Lỗi tải dữ liệu (${res.status})`);
+    const data = await res.json();
+    const samples = data.samples || [];
+
+    if (samples.length === 0) {
+      targetSwitcherList.innerHTML = `
+        <div class="empty-state">
+          Chưa có mẫu nào trong thư viện. Vui lòng chuyển sang trang Camera trực tiếp để chụp mẫu đầu tiên.
+        </div>
+      `;
+      return;
+    }
+
+    const currentTarget = getActiveTarget();
+    const currentId = currentTarget ? currentTarget.id : null;
+
+    targetSwitcherList.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px;">
+        <span style="font-size: 12px; color: var(--text-muted);">
+          ${currentTarget ? `Mục tiêu đang chọn: <strong style="color: var(--text-main);">${currentTarget.product_name}</strong>` : 'Đang ở chế độ đếm tất cả sản phẩm'}
+        </span>
+        ${currentTarget ? `
+          <button type="button" class="btn btn-secondary btn-sm" onclick="clearStudioTarget()">
+            Bỏ chọn mục tiêu
+          </button>
+        ` : ''}
+      </div>
+
+      <div class="sample-list-flat">
+        ${samples.map((s) => {
+          const isActive = s.id === currentId;
+          const thumb = s.sample_image_url || '/static/assets/logo.png';
+          return `
+            <div class="sample-row-flat ${isActive ? 'is-active' : ''}">
+              <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; flex: 1;">
+                <img src="${thumb}" alt="${s.product_name}" class="sample-thumb-mini" />
+                <div>
+                  <div style="font-weight: 600; font-size: 13px;">${s.product_name}</div>
+                  <div style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px;">
+                    <span>Hãng: ${s.brand || 'Chưa rõ'}</span>
+                    <span>Loại: ${s.visual_class || 'Sản phẩm'}</span>
+                    ${s.specs ? `<span>${s.specs}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              ${isActive ? `
+                <button class="btn btn-secondary btn-sm" onclick="clearStudioTarget()" title="Bỏ chọn mục tiêu này để đếm tất cả sản phẩm">
+                  Bỏ chọn
+                </button>
+              ` : `
+                <button class="btn btn-secondary btn-sm" onclick='selectStudioTarget(${JSON.stringify(s).replace(/'/g, "&#39;")})'>
+                  Chọn
+                </button>
+              `}
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="clearStudioTarget()">
+          Bỏ chọn / Đếm tất cả
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeTargetSwitcherModal()">
+          Đóng
+        </button>
+      </div>
+    `;
+  } catch (err) {
+    targetSwitcherList.innerHTML = `<div style="color: var(--status-danger); padding: 12px; font-size: 13px;">Lỗi tải: ${err.message}</div>`;
+  }
+}
+
+window.selectStudioTarget = function(sample) {
+  try {
+    localStorage.setItem('activeTargetProduct', JSON.stringify(sample));
+  } catch (e) {
+    console.warn('localStorage error:', e);
+  }
+  if (targetSwitcherModal) targetSwitcherModal.style.display = 'none';
+  renderTargetBanner();
+  resetStudioData();
+  showToast(`Đã khóa mục tiêu: ${sample.product_name}. Hệ thống sẽ chỉ đếm sản phẩm này.`, 'success');
+};
+
+window.clearStudioTarget = function() {
+  try {
+    localStorage.removeItem('activeTargetProduct');
+  } catch (e) {
+    console.warn('localStorage error:', e);
+  }
+  if (targetSwitcherModal) targetSwitcherModal.style.display = 'none';
+  renderTargetBanner();
+  resetStudioData();
+  showToast('Đã bỏ chọn mục tiêu. Đang ở chế độ đếm tất cả sản phẩm.', 'info');
+};
+
+if (closeSwitcherModalBtn) {
+  closeSwitcherModalBtn.addEventListener('click', () => {
+    if (targetSwitcherModal) targetSwitcherModal.style.display = 'none';
+  });
+}
+
+if (targetSwitcherModal) {
+  targetSwitcherModal.addEventListener('click', (e) => {
+    if (e.target === targetSwitcherModal) {
+      targetSwitcherModal.style.display = 'none';
+    }
+  });
+}
+
+// Initial banner mount
+document.addEventListener('DOMContentLoaded', () => {
+  renderTargetBanner();
+});

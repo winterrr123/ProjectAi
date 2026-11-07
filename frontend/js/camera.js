@@ -1,41 +1,60 @@
 /* ==========================================================================
-   AI VISION PRO - REALTIME CAMERA & AI DETECTOR HUD
-   Webcam integration, live canvas tracker, dynamic bounding boxes, snapshot
+   PRODUCT VISION AI - SINGLE-UNIT SAMPLE REGISTRATION STATION (CAMERA)
+   High-performance webcam stream, optical viewfinder focus, and Gemini Vision AI
+   (Local AI Fallback + Auto-Scan on Hold + No noisy background boxes & No live counting)
    ========================================================================== */
 
 // DOM Elements
 const startCameraBtn = document.getElementById('startCameraBtn');
 const stopCameraBtn = document.getElementById('stopCameraBtn');
-const resetCountBtn = document.getElementById('resetCountBtn');
 const snapshotBtn = document.getElementById('snapshotBtn');
+const identifySampleBtn = document.getElementById('identifySampleBtn');
+const autoScanToggle = document.getElementById('autoScanToggle');
+
 const video = document.getElementById('cameraFeed');
 const canvas = document.getElementById('cameraCanvas');
 const placeholder = document.getElementById('cameraPlaceholder');
 const cameraHud = document.getElementById('cameraHud');
+const cameraViewfinder = document.getElementById('cameraViewfinder');
+const viewfinderCountdown = document.getElementById('viewfinderCountdown');
+const viewfinderInstruction = document.getElementById('viewfinderInstruction');
 const streamStatusText = document.getElementById('streamStatusText');
 const liveDotIndicator = document.getElementById('liveDotIndicator');
-
-const detectedObjects = document.getElementById('detectedObjects');
-const countPanel = document.getElementById('countPanel');
-const totalCount = document.getElementById('totalCount');
-const activeObjectsBadge = document.getElementById('activeObjectsBadge');
 const fpsCounter = document.getElementById('fpsCounter');
 const hudTimerBadge = document.getElementById('hudTimerBadge');
+
+// Sidebar and Modal Mounts
+const activeSampleWrapper = document.getElementById('activeSampleWrapper');
+const cameraRecentSamplesList = document.getElementById('cameraRecentSamplesList');
+const openLibraryBtn = document.getElementById('openLibraryBtn');
+const sampleLibraryModal = document.getElementById('sampleLibraryModal');
+const closeLibraryModalBtn = document.getElementById('closeLibraryModalBtn');
+const sampleLibraryList = document.getElementById('sampleLibraryList');
+
+// Gemini Key Modal Elements
+const btnOpenGeminiModal = document.getElementById('btnOpenGeminiModal');
+const geminiKeyStatusText = document.getElementById('geminiKeyStatusText');
+const geminiKeyModal = document.getElementById('geminiKeyModal');
+const closeGeminiModalBtn = document.getElementById('closeGeminiModalBtn');
+const btnCancelGeminiModal = document.getElementById('btnCancelGeminiModal');
+const btnSaveGeminiKey = document.getElementById('btnSaveGeminiKey');
+const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
+const geminiKeyModalMsg = document.getElementById('geminiKeyModalMsg');
+const btnToggleKeyEye = document.getElementById('btnToggleKeyEye');
 
 let stream = null;
 let animFrameId = null;
 let sessionSeconds = 0;
 let sessionTimer = null;
-let lastFrameTime = performance.now();
-let frameCount = 0;
+let lastFpsTime = performance.now();
+let framesThisSecond = 0;
 
-// State Variables
-let realCameraDetections = [];
-let accumulatedCounts = {};
-const cameraTracks = new Map(); // Persistent smooth tracks: trackId -> Track
-const seenCountedTrackIds = new Set();
+let isIdentifying = false;
+let autoScanInterval = null;
+let holdSteadyScore = 0;
+let lastSamplePixels = null;
 
-// Toast System
+// Toast Notification System
 function showToast(message, type = 'info') {
   let container = document.getElementById('toastContainer');
   if (!container) {
@@ -71,456 +90,90 @@ function formatTime(seconds) {
   return `${h}:${m}:${s}`;
 }
 
-// Offscreen canvas for camera frame extraction
-const camOffCanvas = document.createElement('canvas');
-const camOffCtx = camOffCanvas.getContext('2d', { willReadFrequently: true });
-
-let isInferringCamera = false;
-
 // ==========================================================================
-// High-Speed WebSocket Connection for Real-Time Camera Inference
+// Gemini API Key Management
 // ==========================================================================
-let camSocket = null;
-let isCamSocketConnected = false;
-let camSocketPendingResolve = null;
+async function checkGeminiStatus() {
+  try {
+    const res = await fetch('/api/vision/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    const isConfigured = data?.status?.gemini?.configured;
 
-function initCameraWebSocket() {
-  if (camSocket && (camSocket.readyState === WebSocket.OPEN || camSocket.readyState === WebSocket.CONNECTING)) {
+    if (geminiKeyStatusText && btnOpenGeminiModal) {
+      if (isConfigured) {
+        geminiKeyStatusText.textContent = 'Gemini: Đã kết nối';
+      } else {
+        geminiKeyStatusText.textContent = 'Cấu hình Gemini';
+      }
+    }
+  } catch (e) {
+    console.debug('Gemini status check skipped:', e);
+  }
+}
+
+function openGeminiModal() {
+  if (!geminiKeyModal) return;
+  geminiKeyModal.style.display = 'flex';
+  if (geminiKeyModalMsg) geminiKeyModalMsg.style.display = 'none';
+  const saved = localStorage.getItem('gemini_api_key') || '';
+  if (geminiApiKeyInput) geminiApiKeyInput.value = saved;
+}
+
+function closeGeminiModal() {
+  if (geminiKeyModal) geminiKeyModal.style.display = 'none';
+}
+
+async function saveGeminiKeyAction() {
+  const key = (geminiApiKeyInput?.value || '').trim();
+  if (!key) {
+    showToast('Vui lòng dán Gemini API Key.', 'warning');
     return;
   }
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws/detect`;
-  try {
-    camSocket = new WebSocket(wsUrl);
-    camSocket.onopen = () => {
-      isCamSocketConnected = true;
-      console.log('⚡ Camera WebSocket AI Detection connected');
-    };
-    camSocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (camSocketPendingResolve) {
-          const resolve = camSocketPendingResolve;
-          camSocketPendingResolve = null;
-          resolve(data);
-        }
-      } catch (err) {
-        console.warn('Camera WS message parse error:', err);
-      }
-    };
-    camSocket.onerror = () => {
-      isCamSocketConnected = false;
-    };
-    camSocket.onclose = () => {
-      isCamSocketConnected = false;
-      setTimeout(initCameraWebSocket, 2000);
-    };
-  } catch (e) {
-    isCamSocketConnected = false;
-  }
-}
-initCameraWebSocket();
 
-async function sendCameraFrameToAI() {
-  if (!video || video.paused || video.ended || isInferringCamera) return;
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (!vw || !vh) return;
-
-  isInferringCamera = true;
-  frameCount++;
-
-  // Scale frame to 384px width/height for fast YOLO inference & minimal lag
-  const maxDim = 384;
-  let targetW = vw;
-  let targetH = vh;
-  if (vw > maxDim || vh > maxDim) {
-    if (vw >= vh) {
-      targetW = maxDim;
-      targetH = Math.round((vh * maxDim) / vw);
-    } else {
-      targetH = maxDim;
-      targetW = Math.round((vw * maxDim) / vh);
-    }
-  }
-
-  if (camOffCanvas.width !== targetW || camOffCanvas.height !== targetH) {
-    camOffCanvas.width = targetW;
-    camOffCanvas.height = targetH;
-  }
-  camOffCtx.drawImage(video, 0, 0, targetW, targetH);
-  const base64 = camOffCanvas.toDataURL('image/jpeg', 0.60);
+  btnSaveGeminiKey.disabled = true;
+  btnSaveGeminiKey.textContent = 'Đang kiểm tra...';
 
   try {
-    let data = null;
-
-    // Fast path: WebSocket if connected
-    if (isCamSocketConnected && camSocket && camSocket.readyState === WebSocket.OPEN) {
-      const wsPromise = new Promise((resolve) => {
-        camSocketPendingResolve = resolve;
-        setTimeout(() => {
-          if (camSocketPendingResolve === resolve) {
-            camSocketPendingResolve = null;
-            resolve(null);
-          }
-        }, 1000);
-      });
-      camSocket.send(JSON.stringify({
-        type: 'frame',
-        image: base64,
-        frame_number: frameCount,
-        reset: false,
-        source: 'camera',
-      }));
-      data = await wsPromise;
-    }
-
-    // Fallback path: HTTP POST if WS was unavailable or timed out
-    if (!data) {
-      const res = await fetch('/api/camera/detect-frame', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image: base64,
-          frame_number: frameCount,
-          reset: false,
-          source: 'camera',
-        }),
-      });
-      if (res.ok) {
-        data = await res.json();
-      }
-    }
-
-    if (data && data.success) {
-      const cw = canvas.width || vw;
-      const ch = canvas.height || vh;
-      const scaleX = cw / targetW;
-      const scaleY = ch / targetH;
-      const rawDetections = data.detections || [];
-      const now = performance.now();
-
-      // Update or add tracks to persistent cameraTracks store
-      rawDetections.forEach((d) => {
-        const trackId = d.tracking_id ?? 0;
-        const isCounted = d.is_counted || seenCountedTrackIds.has(trackId);
-        if (isCounted && trackId !== 0) {
-          seenCountedTrackIds.add(trackId);
-        }
-
-        const x1 = d.x1 * scaleX;
-        const y1 = d.y1 * scaleY;
-        const x2 = d.x2 * scaleX;
-        const y2 = d.y2 * scaleY;
-
-        if (cameraTracks.has(trackId)) {
-          const track = cameraTracks.get(trackId);
-          const dt = Math.max(16, now - track.lastSeen);
-          const nVx1 = (x1 - track.targetX1) / dt;
-          const nVy1 = (y1 - track.targetY1) / dt;
-          const nVx2 = (x2 - track.targetX2) / dt;
-          const nVy2 = (y2 - track.targetY2) / dt;
-
-          track.vx1 = track.vx1 ? (track.vx1 * 0.35 + nVx1 * 0.65) : nVx1;
-          track.vy1 = track.vy1 ? (track.vy1 * 0.35 + nVy1 * 0.65) : nVy1;
-          track.vx2 = track.vx2 ? (track.vx2 * 0.35 + nVx2 * 0.65) : nVx2;
-          track.vy2 = track.vy2 ? (track.vy2 * 0.35 + nVy2 * 0.65) : nVy2;
-
-          track.targetX1 = x1;
-          track.targetY1 = y1;
-          track.targetX2 = x2;
-          track.targetY2 = y2;
-          track.confidence = d.confidence || track.confidence;
-          track.class_name = d.class_name;
-          track.is_counted = isCounted;
-          track.lastSeen = now;
-        } else {
-          // Check if this detection spatially replaces an older track at the same spot
-          let initX1 = x1, initY1 = y1, initX2 = x2, initY2 = y2;
-          for (const [oldId, oldTrack] of cameraTracks.entries()) {
-            if (oldId !== trackId) {
-              const cOx = (oldTrack.currX1 + oldTrack.currX2) / 2;
-              const cOy = (oldTrack.currY1 + oldTrack.currY2) / 2;
-              const cNx = (x1 + x2) / 2;
-              const cNy = (y1 + y2) / 2;
-              if (Math.hypot(cOx - cNx, cOy - cNy) < 60) {
-                initX1 = oldTrack.currX1;
-                initY1 = oldTrack.currY1;
-                initX2 = oldTrack.currX2;
-                initY2 = oldTrack.currY2;
-                cameraTracks.delete(oldId);
-                break;
-              }
-            }
-          }
-
-          cameraTracks.set(trackId, {
-            id: trackId,
-            class_name: d.class_name,
-            confidence: d.confidence || 0.9,
-            is_counted: isCounted,
-            currX1: initX1,
-            currY1: initY1,
-            currX2: initX2,
-            currY2: initY2,
-            targetX1: x1,
-            targetY1: y1,
-            targetX2: x2,
-            targetY2: y2,
-            vx1: 0,
-            vy1: 0,
-            vx2: 0,
-            vy2: 0,
-            lastSeen: now,
-          });
-        }
-      });
-
-      if (data.counts && Object.keys(data.counts).length > 0) {
-        accumulatedCounts = data.counts;
-      }
-      if (data.total !== undefined && totalCount) {
-        totalCount.textContent = data.total;
-      }
-    }
-  } catch (e) {
-    console.debug('Camera AI infer error:', e);
-  } finally {
-    setTimeout(() => {
-      isInferringCamera = false;
-    }, 40);
-  }
-}
-
-// Draw Clean Bounding Boxes on Canvas with Anti-Jitter and Persistence
-function drawDetections(ctx, width, height) {
-  ctx.drawImage(video, 0, 0, width, height);
-
-  // Trigger backend AI inference
-  sendCameraFrameToAI();
-
-  const now = performance.now();
-  const lerp = 0.28; // Soft, stable lerp smoothing
-  const activeList = [];
-
-  // Pairwise deduplication of active tracks to strictly guarantee 1 box per item
-  const trackEntries = Array.from(cameraTracks.entries());
-  for (let i = 0; i < trackEntries.length; i++) {
-    const [idA, trackA] = trackEntries[i];
-    if (!cameraTracks.has(idA)) continue;
-    for (let j = i + 1; j < trackEntries.length; j++) {
-      const [idB, trackB] = trackEntries[j];
-      if (!cameraTracks.has(idB)) continue;
-
-      const cAx = (trackA.currX1 + trackA.currX2) / 2;
-      const cAy = (trackA.currY1 + trackA.currY2) / 2;
-      const cBx = (trackB.currX1 + trackB.currX2) / 2;
-      const cBy = (trackB.currY1 + trackB.currY2) / 2;
-      const dist = Math.hypot(cAx - cBx, cAy - cBy);
-
-      const interX1 = Math.max(trackA.currX1, trackB.currX1);
-      const interY1 = Math.max(trackA.currY1, trackB.currY1);
-      const interX2 = Math.min(trackA.currX2, trackB.currX2);
-      const interY2 = Math.min(trackA.currY2, trackB.currY2);
-      const interW = Math.max(0, interX2 - interX1);
-      const interH = Math.max(0, interY2 - interY1);
-      const interArea = interW * interH;
-      const areaA = Math.max(1, (trackA.currX2 - trackA.currX1) * (trackA.currY2 - trackA.currY1));
-      const areaB = Math.max(1, (trackB.currX2 - trackB.currX1) * (trackB.currY2 - trackB.currY1));
-      const minArea = Math.min(areaA, areaB);
-      const iou = interArea / (areaA + areaB - interArea);
-
-      if (dist < 60 || (interArea / minArea) > 0.4 || iou > 0.25) {
-        if (trackA.lastSeen < trackB.lastSeen) {
-          cameraTracks.delete(idA);
-          break;
-        } else {
-          cameraTracks.delete(idB);
-        }
-      }
-    }
-  }
-
-  cameraTracks.forEach((track, trackId) => {
-    const age = now - track.lastSeen;
-
-    // Check if product has moved out near screen edges
-    const isNearEdge =
-      track.currX1 <= 15 ||
-      track.currY1 <= 15 ||
-      track.currX2 >= width - 15 ||
-      track.currY2 >= height - 15;
-
-    // Persistence up to 750ms to completely prevent box flickering
-    const maxAge = isNearEdge ? 350 : 750;
-
-    if (age > maxAge) {
-      cameraTracks.delete(trackId);
-      return;
-    }
-
-    // Deadband filter & forward velocity projection
-    const elapsed = Math.min(220, now - track.lastSeen);
-    const forwardX1 = track.targetX1 + (track.vx1 || 0) * elapsed * 0.75;
-    const forwardY1 = track.targetY1 + (track.vy1 || 0) * elapsed * 0.75;
-    const forwardX2 = track.targetX2 + (track.vx2 || 0) * elapsed * 0.75;
-    const forwardY2 = track.targetY2 + (track.vy2 || 0) * elapsed * 0.75;
-
-    const dx1 = forwardX1 - track.currX1;
-    const dy1 = forwardY1 - track.currY1;
-    const dx2 = forwardX2 - track.currX2;
-    const dy2 = forwardY2 - track.currY2;
-
-    const lerp = 0.32;
-    track.currX1 += Math.abs(dx1) < 1.0 ? 0 : dx1 * lerp;
-    track.currY1 += Math.abs(dy1) < 1.0 ? 0 : dy1 * lerp;
-    track.currX2 += Math.abs(dx2) < 1.0 ? 0 : dx2 * lerp;
-    track.currY2 += Math.abs(dy2) < 1.0 ? 0 : dy2 * lerp;
-
-    const x = Math.max(0, track.currX1);
-    const y = Math.max(0, track.currY1);
-    const bw = Math.min(width, track.currX2) - x;
-    const bh = Math.min(height, track.currY2) - y;
-    if (bw <= 0 || bh <= 0) return;
-
-    activeList.push({
-      class_name: track.class_name,
-      tracking_id: track.id,
-      confidence: track.confidence,
-      is_counted: track.is_counted,
+    const res = await fetch('/api/vision/gemini/save-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key, persist_to_env: true }),
     });
+    const data = await res.json();
 
-    // Fade out smoothly only during the final 150ms before removal
-    let alpha = 1.0;
-    if (age > maxAge - 150) {
-      alpha = Math.max(0, (maxAge - age) / 150);
-    }
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-
-    const isCounted = track.is_counted || seenCountedTrackIds.has(trackId);
-    const color = isCounted ? '#10b981' : '#3b82f6';
-
-    // Subtle background tint with soft depth
-    ctx.fillStyle = isCounted ? 'rgba(16, 185, 129, 0.08)' : 'rgba(59, 130, 246, 0.08)';
-    ctx.fillRect(x, y, bw, bh);
-
-    // Clean primary bounding outline
-    ctx.strokeStyle = isCounted ? 'rgba(16, 185, 129, 0.65)' : 'rgba(59, 130, 246, 0.65)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(x, y, bw, bh);
-
-    // Accent Corner Brackets (Computer Vision high-precision markers)
-    const cornerLen = Math.min(14, Math.min(bw, bh) / 4);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    // Top-left
-    ctx.moveTo(x, y + cornerLen); ctx.lineTo(x, y); ctx.lineTo(x + cornerLen, y);
-    // Top-right
-    ctx.moveTo(x + bw - cornerLen, y); ctx.lineTo(x + bw, y); ctx.lineTo(x + bw, y + cornerLen);
-    // Bottom-left
-    ctx.moveTo(x, y + bh - cornerLen); ctx.lineTo(x, y + bh); ctx.lineTo(x + cornerLen, y + bh);
-    // Bottom-right
-    ctx.moveTo(x + bw - cornerLen, y + bh); ctx.lineTo(x + bw, y + bh); ctx.lineTo(x + bw, y + bh - cornerLen);
-    ctx.stroke();
-
-    // Clean floating label tag badge
-    const confText = `${Math.round(track.confidence * 100)}%`;
-    const statusMark = isCounted ? '✓ ' : '';
-    const label = `${statusMark}${track.class_name} #${track.id} · ${confText}`;
-
-    ctx.font = '600 12px "Plus Jakarta Sans", sans-serif';
-    const textMetrics = ctx.measureText(label);
-    const tagW = textMetrics.width + 16;
-    const tagH = 22;
-    const tagY = Math.max(0, y - tagH - 3);
-
-    // Tag background with rounded pill geometry
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(x, tagY, tagW, tagH, 6) : ctx.rect(x, tagY, tagW, tagH);
-    ctx.fill();
-
-    // Tag text
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(label, x + 8, tagY + 15);
-
-    ctx.restore();
-  });
-
-  realCameraDetections = activeList;
-
-  // Calculate FPS
-  frameCount++;
-  const fpsNow = performance.now();
-  if (fpsNow - lastFrameTime >= 1000) {
-    const fps = Math.round((frameCount * 1000) / (fpsNow - lastFrameTime));
-    if (fpsCounter) fpsCounter.textContent = fps;
-    frameCount = 0;
-    lastFrameTime = fpsNow;
-  }
-}
-
-// Render Side Panel Detection Cards
-function updateSidebarUI() {
-  if (activeObjectsBadge) {
-    activeObjectsBadge.textContent = `${realCameraDetections.length} Vật thể`;
-  }
-
-  // Active detected objects list
-  if (detectedObjects) {
-    if (realCameraDetections.length > 0) {
-      detectedObjects.innerHTML = realCameraDetections
-        .map((t) => {
-          return `
-            <div class="detected-card">
-              <div>
-                <div class="title">${t.class_name}</div>
-                <div class="sub">TRACK_ID: #${t.tracking_id}</div>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <button class="btn-gemini-inspect" onclick="inspectTrackGemini(${t.tracking_id})" title="Soi chi tiết với Gemini Vision AI">
-                  ✨ Gemini
-                </button>
-                <span class="confidence-chip">${Math.round(t.confidence * 100)}%</span>
-              </div>
-            </div>
-          `;
-        })
-        .join('');
+    if (res.ok && data.success) {
+      localStorage.setItem('gemini_api_key', key);
+      showToast('Đã lưu và kích hoạt Google Gemini API Key thành công!', 'success');
+      closeGeminiModal();
+      checkGeminiStatus();
     } else {
-      detectedObjects.innerHTML = `
-        <div style="color: var(--text-muted); font-size: 0.86rem; text-align: center; padding: 24px 0;">
-          Chưa có vật thể nào trong khung hình.
-        </div>
-      `;
+      if (geminiKeyModalMsg) {
+        geminiKeyModalMsg.className = 'alert-box alert-error';
+        geminiKeyModalMsg.textContent = data.detail || data.message || 'API Key không hợp lệ.';
+        geminiKeyModalMsg.style.display = 'block';
+      }
     }
-  }
-
-  // Counter breakdown
-  if (countPanel) {
-    const entries = Object.entries(accumulatedCounts);
-    if (entries.length > 0) {
-      countPanel.innerHTML = entries
-        .map(([name, count]) => {
-          return `
-            <div class="breakdown-row">
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span style="width:8px; height:8px; border-radius:50%; background:var(--primary);"></span>
-                <span style="font-weight:600;">${name}</span>
-              </div>
-              <strong style="color:var(--primary); font-weight:700;">${count}</strong>
-            </div>
-          `;
-        })
-        .join('');
+  } catch (err) {
+    if (geminiKeyModalMsg) {
+      geminiKeyModalMsg.className = 'alert-box alert-error';
+      geminiKeyModalMsg.textContent = 'Không thể kết nối máy chủ để lưu key: ' + err.message;
+      geminiKeyModalMsg.style.display = 'block';
     }
+  } finally {
+    btnSaveGeminiKey.disabled = false;
+    btnSaveGeminiKey.textContent = 'Lưu & Kích Hoạt Key';
   }
 }
 
-// Frame loop
+function toggleKeyVisibility() {
+  if (!geminiApiKeyInput) return;
+  geminiApiKeyInput.type = geminiApiKeyInput.type === 'password' ? 'text' : 'password';
+}
+
+// ==========================================================================
+// Smooth Real-Time Camera Render Loop (Clean, 60fps, No noisy YOLO boxes)
+// ==========================================================================
 function processCameraFrames() {
   if (!stream || video.paused || video.ended) return;
 
@@ -530,11 +183,118 @@ function processCameraFrames() {
       canvas.height = video.videoHeight;
     }
     const ctx = canvas.getContext('2d');
-    drawDetections(ctx, canvas.width, canvas.height);
-    updateSidebarUI();
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Calculate real FPS
+    framesThisSecond++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 1000) {
+      if (fpsCounter) {
+        fpsCounter.textContent = Math.round((framesThisSecond * 1000) / (now - lastFpsTime));
+      }
+      framesThisSecond = 0;
+      lastFpsTime = now;
+    }
   }
 
   animFrameId = requestAnimationFrame(processCameraFrames);
+}
+
+// ==========================================================================
+// Auto-Scan on Hold (Tự Động Chụp & Quét Khi Người Dùng Giữ Yên Sản Phẩm)
+// ==========================================================================
+const diffCanvas = document.createElement('canvas');
+diffCanvas.width = 48;
+diffCanvas.height = 48;
+const diffCtx = diffCanvas.getContext('2d', { willReadFrequently: true });
+
+function startAutoScanMonitor() {
+  stopAutoScanMonitor();
+  holdSteadyScore = 0;
+  lastSamplePixels = null;
+
+  autoScanInterval = setInterval(() => {
+    if (!stream || !canvas || isIdentifying) return;
+    if (autoScanToggle && !autoScanToggle.checked) {
+      if (viewfinderCountdown) viewfinderCountdown.style.display = 'none';
+      return;
+    }
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+    if (!cw || !ch) return;
+
+    // Sample the center viewfinder region (60% width and height)
+    const cropW = Math.round(cw * 0.60);
+    const cropH = Math.round(ch * 0.60);
+    const cropX = Math.round((cw - cropW) / 2);
+    const cropY = Math.round((ch - cropH) / 2);
+
+    diffCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, 48, 48);
+    const imgData = diffCtx.getImageData(0, 0, 48, 48);
+    const pixels = imgData.data;
+
+    if (!lastSamplePixels) {
+      lastSamplePixels = new Uint8Array(pixels);
+      return;
+    }
+
+    // Compute pixel diff between consecutive 350ms samples
+    let diffSum = 0;
+    let nonZeroCount = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const dR = Math.abs(pixels[i] - lastSamplePixels[i]);
+      const dG = Math.abs(pixels[i + 1] - lastSamplePixels[i + 1]);
+      const dB = Math.abs(pixels[i + 2] - lastSamplePixels[i + 2]);
+      const delta = (dR + dG + dB) / 3;
+      diffSum += delta;
+      if (pixels[i] > 30 || pixels[i + 1] > 30 || pixels[i + 2] > 30) {
+        nonZeroCount++;
+      }
+      lastSamplePixels[i] = pixels[i];
+      lastSamplePixels[i + 1] = pixels[i + 1];
+      lastSamplePixels[i + 2] = pixels[i + 2];
+    }
+
+    const avgDiff = diffSum / (48 * 48);
+
+    // If an object is present and motion is steady/low (user holding product)
+    if (avgDiff > 0.8 && avgDiff < 14.0 && nonZeroCount > 300) {
+      holdSteadyScore += 350;
+
+      if (viewfinderCountdown) {
+        if (holdSteadyScore >= 700 && holdSteadyScore < 1400) {
+          viewfinderCountdown.textContent = '2';
+          viewfinderCountdown.style.display = 'flex';
+        } else if (holdSteadyScore >= 1400 && holdSteadyScore < 2000) {
+          viewfinderCountdown.textContent = '1';
+          viewfinderCountdown.style.display = 'flex';
+        }
+      }
+
+      if (holdSteadyScore >= 2000) {
+        if (viewfinderCountdown) viewfinderCountdown.style.display = 'none';
+        holdSteadyScore = 0;
+        identifySampleFromCamera();
+      }
+    } else {
+      // Rapid motion or background reset
+      holdSteadyScore = Math.max(0, holdSteadyScore - 400);
+      if (viewfinderCountdown && holdSteadyScore < 600) {
+        viewfinderCountdown.style.display = 'none';
+      }
+    }
+  }, 350);
+}
+
+function stopAutoScanMonitor() {
+  if (autoScanInterval) {
+    clearInterval(autoScanInterval);
+    autoScanInterval = null;
+  }
+  if (viewfinderCountdown) {
+    viewfinderCountdown.style.display = 'none';
+  }
 }
 
 // Start Camera Stream
@@ -545,18 +305,17 @@ async function startCamera() {
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error(
-        'Trình duyệt không hỗ trợ mediaDevices hoặc trang web không chạy trên http://localhost:8000 / http://127.0.0.1:8000.'
+        'Trình duyệt không hỗ trợ mediaDevices hoặc trang web không chạy trên http://localhost:8000.'
       );
     }
 
-    // Try high resolution, fallback to basic constraints if not supported
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
     } catch (constraintErr) {
-      console.warn('Fallback to basic video constraints:', constraintErr);
+      console.warn('Fallback to default camera constraints:', constraintErr);
       stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: false,
@@ -566,7 +325,7 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
 
-    // Ensure video has actual dimensions before starting canvas render
+    // Ensure video metadata loaded
     await new Promise((resolve) => {
       if (video.videoWidth > 0 && video.videoHeight > 0) {
         resolve();
@@ -591,11 +350,13 @@ async function startCamera() {
     placeholder.style.display = 'none';
     canvas.style.display = 'block';
     cameraHud.style.display = 'flex';
-    streamStatusText.textContent = 'Camera: Đang nhận diện trực tiếp';
+    streamStatusText.textContent = 'Camera: Đang hoạt động (Trạm nhận diện)';
     liveDotIndicator.style.opacity = '1';
 
     stopCameraBtn.disabled = false;
     snapshotBtn.disabled = false;
+    if (identifySampleBtn) identifySampleBtn.disabled = false;
+    if (cameraViewfinder) cameraViewfinder.style.display = 'flex';
     startCameraBtn.style.display = 'none';
 
     // Start timer
@@ -606,23 +367,26 @@ async function startCamera() {
     }, 1000);
 
     // Launch render loop
-    lastFrameTime = performance.now();
-    frameCount = 0;
+    lastFpsTime = performance.now();
+    framesThisSecond = 0;
     if (animFrameId) cancelAnimationFrame(animFrameId);
     animFrameId = requestAnimationFrame(processCameraFrames);
 
+    // Launch Auto-Scan on Hold
+    startAutoScanMonitor();
+
     if (typeof window.setAiActive === 'function') window.setAiActive(true);
 
-    showToast('Camera đã bật và hệ thống theo dõi AI đang hoạt động!', 'success');
+    showToast('Camera đã bật! Đưa sản phẩm vào khung ngắm để nhận diện.', 'success');
   } catch (error) {
     console.error('Không thể truy cập camera:', error);
     let msg = error.message || 'Cần cấp quyền camera trong trình duyệt';
     if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-      msg = 'Trình duyệt chưa được cấp quyền camera. Vui lòng nhấn vào biểu tượng ổ khóa/camera trên thanh địa chỉ trình duyệt và chọn "Cho phép (Allow)"!';
+      msg = 'Trình duyệt chưa được cấp quyền camera. Vui lòng bấm vào biểu tượng camera trên thanh địa chỉ và chọn "Cho phép (Allow)"!';
     } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
       msg = 'Không tìm thấy thiết bị webcam nào được kết nối với máy tính.';
     } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-      msg = 'Camera đang bị ứng dụng khác sử dụng (Zoom, Teams, Zalo, OBS...). Vui lòng tắt các ứng dụng đó rồi nhấn thử lại!';
+      msg = 'Camera đang bị ứng dụng khác chiếm dụng (Zoom, Teams, OBS...). Vui lòng đóng ứng dụng đó và thử lại!';
     }
     showToast(msg, 'error');
     startCameraBtn.disabled = false;
@@ -637,8 +401,8 @@ async function startCamera() {
 }
 
 // Stop Camera Stream
-async function stopCamera() {
-  if (typeof window.setAiActive === 'function') window.setAiActive(false);
+function stopCamera() {
+  stopAutoScanMonitor();
 
   if (stream) {
     stream.getTracks().forEach((track) => track.stop());
@@ -655,31 +419,23 @@ async function stopCamera() {
     sessionTimer = null;
   }
 
-  video.pause();
-  video.srcObject = null;
-
-  // Backend stop notification
-  try {
-    await fetch('/api/camera/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'stop' }),
-    });
-  } catch (e) {
-    console.warn('Backend camera stop call:', e);
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.style.display = 'none';
   }
 
-  // Reset UI
   placeholder.style.display = 'flex';
-  canvas.style.display = 'none';
   cameraHud.style.display = 'none';
-  streamStatusText.textContent = 'Camera: Đã dừng kết nối';
+  if (cameraViewfinder) cameraViewfinder.style.display = 'none';
+
+  streamStatusText.textContent = 'Camera: Đã ngắt kết nối';
   liveDotIndicator.style.opacity = '0.3';
 
-  startCameraBtn.style.display = 'inline-flex';
   startCameraBtn.disabled = false;
+  startCameraBtn.style.display = 'inline-flex';
   startCameraBtn.innerHTML = `
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <polygon points="5 3 19 12 5 21 5 3"></polygon>
     </svg>
     Bật Camera
@@ -687,107 +443,442 @@ async function stopCamera() {
 
   stopCameraBtn.disabled = true;
   snapshotBtn.disabled = true;
-  cameraTracks.clear();
-  seenCountedTrackIds.clear();
-  realCameraDetections = [];
-  updateSidebarUI();
+  if (identifySampleBtn) identifySampleBtn.disabled = true;
 
-  showToast('Đã dừng camera và lưu phiên làm việc.', 'info');
+  if (typeof window.setAiActive === 'function') window.setAiActive(false);
+
+  fetch('/api/camera/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'stop' }),
+  }).catch(() => {});
+
+  showToast('Đã dừng phát Camera.', 'info');
 }
 
-// Reset Counter & Tracking
-async function resetAllCounts() {
-  cameraTracks.clear();
-  seenCountedTrackIds.clear();
-  accumulatedCounts = {};
-  realCameraDetections = [];
-  if (totalCount) totalCount.textContent = '0';
-  if (countPanel) {
-    countPanel.innerHTML = `
-      <div class="breakdown-row" style="color: var(--text-muted);">
-        <span>Chưa có dữ liệu</span>
-        <span>-</span>
-      </div>
-    `;
-  }
-  updateSidebarUI();
-
-  if (isCamSocketConnected && camSocket && camSocket.readyState === WebSocket.OPEN) {
-    camSocket.send(JSON.stringify({ type: 'reset', source: 'camera' }));
-  }
-
-  try {
-    const res = await fetch('/api/detect/reset', { method: 'POST' });
-    if (res.ok) {
-      showToast('Đã đặt lại toàn bộ đếm và mã theo dõi về 0!', 'success');
-    }
-  } catch (e) {
-    console.error('Reset error:', e);
-  }
-}
-
-// Capture Snapshot
-function captureSnapshot() {
-  if (!canvas || !stream) return;
-  const link = document.createElement('a');
-  link.download = `snapshot_${Date.now()}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
-  showToast('Đã chụp và tải ảnh khung hình!', 'success');
-}
-
-// Event Bindings
-startCameraBtn.addEventListener('click', startCamera);
-stopCameraBtn.addEventListener('click', stopCamera);
-if (resetCountBtn) resetCountBtn.addEventListener('click', resetAllCounts);
-snapshotBtn.addEventListener('click', captureSnapshot);
-
-// Topbar dynamic scroll effect & VisionHub Init
-document.addEventListener('DOMContentLoaded', () => {
-  if (window.VisionHub) {
-    window.VisionHub.init('visionHubMount');
-  }
-
-  const topbar = document.querySelector('.topbar');
-  if (topbar) {
-    const handleScroll = () => {
-      if (window.scrollY > 15) {
-        topbar.classList.add('scrolled');
-      } else {
-        topbar.classList.remove('scrolled');
-      }
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-  }
-});
-
-// Gemini Inspection for specific tracked item
-window.inspectTrackGemini = function (trackId) {
-  const track = cameraTracks.get(trackId);
-  if (!canvas) {
-    if (window.VisionHub) window.VisionHub.triggerFullSceneInspection();
+// Full Snapshot Capture
+snapshotBtn.addEventListener('click', () => {
+  if (!canvas || !stream) {
+    showToast('Chưa có luồng camera để chụp ảnh', 'warning');
     return;
   }
 
-  const cropCanvas = document.createElement('canvas');
-  const cropCtx = cropCanvas.getContext('2d');
-  const pad = 12;
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = canvas.width;
+  tempCanvas.height = canvas.height;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(canvas, 0, 0);
 
-  let sx = 0, sy = 0, sw = canvas.width, sh = canvas.height;
-  if (track) {
-    sx = Math.max(0, track.currX1 - pad);
-    sy = Math.max(0, track.currY1 - pad);
-    sw = Math.min(canvas.width - sx, Math.max(30, (track.currX2 - track.currX1) + pad * 2));
-    sh = Math.min(canvas.height - sy, Math.max(30, (track.currY2 - track.currY1) + pad * 2));
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const dataUrl = tempCanvas.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = `product_sample_${timestamp}.png`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  showToast('Đã lưu ảnh chụp khung hình camera!', 'success');
+});
+
+// ==========================================================================
+// SINGLE-UNIT SAMPLE REGISTRATION & PERSISTENCE
+// ==========================================================================
+
+function renderActiveSampleCard(sample) {
+  if (!activeSampleWrapper) return;
+  if (!sample) {
+    activeSampleWrapper.innerHTML = `
+      <div class="kv-panel">
+        <div class="kv-panel-header">Mục tiêu đếm đang chọn</div>
+        <div class="kv-list">
+          <div class="kv-row">
+            <span class="kv-key">Mẫu:</span>
+            <span class="kv-val">Chưa chọn</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-key">Phân loại:</span>
+            <span class="kv-val">-</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-key">Hãng:</span>
+            <span class="kv-val">-</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-key">Chế độ lọc:</span>
+            <span class="kv-val">Đếm tổng quát</span>
+          </div>
+        </div>
+        <div class="empty-state" style="margin-top: 10px;">
+          Đặt sản phẩm vào khung ngắm rồi nhấn "Chụp mẫu" để lưu thông tin.
+        </div>
+      </div>
+    `;
+    return;
   }
 
-  cropCanvas.width = sw;
-  cropCanvas.height = sh;
-  cropCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-  const cropBase64 = cropCanvas.toDataURL('image/jpeg', 0.9);
+  const thumbSrc = sample.sample_image_url || '/static/assets/logo.png';
+  const brand = sample.brand || 'Chưa rõ';
+  const visualClass = sample.visual_class || 'Sản phẩm';
+  const specs = sample.specs || '';
 
-  if (window.VisionHub) {
-    window.VisionHub.inspectProductCrop(cropBase64);
+  activeSampleWrapper.innerHTML = `
+    <div class="kv-panel">
+      <div class="kv-panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Mục tiêu đếm đang chọn</span>
+        <button id="btnCardClearTarget" class="link-btn" style="font-size: 11px;">Bỏ chọn</button>
+      </div>
+      <div style="display: flex; gap: 10px; margin-bottom: 12px; align-items: center;">
+        <img src="${thumbSrc}" alt="${sample.product_name}" class="sample-thumb-mini" style="width: 36px; height: 36px;" />
+        <div>
+          <div style="font-weight: 600; font-size: 13px;">${sample.product_name}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">${brand}</div>
+        </div>
+      </div>
+      <div class="kv-list">
+        <div class="kv-row">
+          <span class="kv-key">Phân loại:</span>
+          <span class="kv-val">${visualClass}</span>
+        </div>
+        <div class="kv-row">
+          <span class="kv-key">Hãng:</span>
+          <span class="kv-val">${brand}</span>
+        </div>
+        ${specs ? `
+        <div class="kv-row">
+          <span class="kv-key">Quy cách:</span>
+          <span class="kv-val">${specs}</span>
+        </div>` : ''}
+        <div class="kv-row">
+          <span class="kv-key">Chế độ lọc:</span>
+          <span class="kv-val text-accent">Chỉ đếm mẫu này</span>
+        </div>
+      </div>
+      <div style="margin-top: 14px;">
+        <a href="/upload" class="btn btn-primary btn-sm btn-wide">
+          Chuyển sang đếm qua video
+        </a>
+      </div>
+    </div>
+  `;
+
+  const btnCardClear = document.getElementById('btnCardClearTarget');
+  if (btnCardClear) {
+    btnCardClear.addEventListener('click', clearActiveTarget);
+  }
+}
+
+function setActiveTarget(sample) {
+  try {
+    localStorage.setItem('activeTargetProduct', JSON.stringify(sample));
+  } catch (e) {
+    console.warn('Could not save to localStorage:', e);
+  }
+  renderActiveSampleCard(sample);
+  loadRecentSamplesPreview();
+}
+
+function clearActiveTarget() {
+  localStorage.removeItem('activeTargetProduct');
+  renderActiveSampleCard(null);
+  loadRecentSamplesPreview();
+  showToast('Đã bỏ chọn mục tiêu sản phẩm.', 'info');
+}
+
+// Single-Unit Identification via Viewfinder Crop
+async function identifySampleFromCamera() {
+  if (isIdentifying) return;
+  if (!canvas || !stream) {
+    showToast('Vui lòng bật camera trước khi chụp nhận diện mẫu.', 'warning');
+    return;
+  }
+
+  isIdentifying = true;
+  const viewfinderBox = cameraViewfinder ? cameraViewfinder.querySelector('.viewfinder-box') : null;
+
+  identifySampleBtn.disabled = true;
+  const originalBtnHtml = identifySampleBtn.innerHTML;
+  identifySampleBtn.innerHTML = 'Đang phân tích mẫu...';
+
+  if (viewfinderBox) {
+    viewfinderBox.classList.add('is-scanning');
+  }
+  if (viewfinderInstruction) {
+    viewfinderInstruction.textContent = 'Đang quét vùng lấy nét và phân tích...';
+  }
+
+  try {
+    const cw = canvas.width || 640;
+    const ch = canvas.height || 480;
+    const cropW = Math.max(80, Math.round(cw * 0.60));
+    const cropH = Math.max(80, Math.round(ch * 0.60));
+    const cropX = Math.round((cw - cropW) / 2);
+    const cropY = Math.round((ch - cropH) / 2);
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const cropCtx = cropCanvas.getContext('2d');
+    cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    const cropBase64 = cropCanvas.toDataURL('image/jpeg', 0.92);
+
+    const res = await fetch('/api/vision/identify-sample', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: cropBase64 }),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || `Lỗi HTTP ${res.status}`);
+    }
+
+    const resData = await res.json();
+    if (resData.success && resData.sample) {
+      setActiveTarget(resData.sample);
+
+      if (viewfinderBox) {
+        viewfinderBox.classList.remove('is-scanning');
+        viewfinderBox.classList.add('is-success');
+      }
+      if (viewfinderInstruction) {
+        viewfinderInstruction.textContent = `Đã nhận diện: ${resData.sample.product_name}`;
+      }
+
+      const toastMsg = resData.notice || `Nhận diện thành công: "${resData.sample.product_name}"`;
+      showToast(toastMsg, 'success');
+
+      setTimeout(() => {
+        if (viewfinderBox) viewfinderBox.classList.remove('is-success');
+        if (viewfinderInstruction) {
+          viewfinderInstruction.textContent = 'Đặt 1 sản phẩm vào giữa khung ngắm rồi nhấn "Chụp mẫu" (hoặc giữ yên 2 giây)';
+        }
+      }, 2500);
+    } else {
+      throw new Error('Không nhận được dữ liệu mẫu từ máy chủ.');
+    }
+  } catch (err) {
+    console.error('Lỗi nhận diện mẫu:', err);
+    if (viewfinderBox) viewfinderBox.classList.remove('is-scanning');
+    if (viewfinderInstruction) {
+      viewfinderInstruction.textContent = 'Đặt 1 sản phẩm vào giữa khung ngắm rồi nhấn "Chụp mẫu" (hoặc giữ yên 2 giây)';
+    }
+    showToast(`Lỗi nhận diện: ${err.message}`, 'error');
+  } finally {
+    isIdentifying = false;
+    identifySampleBtn.disabled = false;
+    identifySampleBtn.innerHTML = originalBtnHtml;
+  }
+}
+
+// Load Recent Samples Preview in Sidebar
+async function loadRecentSamplesPreview() {
+  if (!cameraRecentSamplesList) return;
+
+  try {
+    const res = await fetch('/api/vision/samples');
+    if (!res.ok) throw new Error('Không thể tải');
+    const data = await res.json();
+    const samples = (data.samples || []).slice(0, 3);
+
+    if (samples.length === 0) {
+      cameraRecentSamplesList.innerHTML = `
+        <div class="empty-state">
+          Chưa có mẫu nào được lưu.
+        </div>
+      `;
+      return;
+    }
+
+    let activeTargetId = null;
+    try {
+      const activeSaved = JSON.parse(localStorage.getItem('activeTargetProduct') || '{}');
+      activeTargetId = activeSaved.id;
+    } catch (_) {}
+
+    cameraRecentSamplesList.innerHTML = samples.map((s) => {
+      const isActive = s.id === activeTargetId;
+      const thumb = s.sample_image_url || '/static/assets/logo.png';
+      return `
+        <div class="sample-row-flat ${isActive ? 'is-active' : ''}">
+          <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+            <img src="${thumb}" alt="${s.product_name}" class="sample-thumb-mini" style="width: 24px; height: 24px;" />
+            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500;">
+              ${s.product_name}
+            </div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick='${isActive ? "clearActiveTarget()" : `selectSampleFromModal(${JSON.stringify(s).replace(/'/g, "&#39;")})`}'>
+            ${isActive ? 'Bỏ chọn' : 'Chọn'}
+          </button>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    cameraRecentSamplesList.innerHTML = '';
+  }
+}
+
+// Modal Library Management
+async function loadSampleLibrary() {
+  if (!sampleLibraryList) return;
+  sampleLibraryList.innerHTML = '<div class="empty-state">Đang tải danh sách mẫu...</div>';
+
+  try {
+    const res = await fetch('/api/vision/samples');
+    if (!res.ok) {
+      throw new Error(`Lỗi tải dữ liệu (${res.status})`);
+    }
+    const data = await res.json();
+    const samples = data.samples || [];
+
+    if (samples.length === 0) {
+      sampleLibraryList.innerHTML = `
+        <div class="empty-state">
+          Chưa có mẫu nào được lưu. Hãy đưa sản phẩm vào khung ngắm camera và nhấn Chụp mẫu.
+        </div>
+      `;
+      return;
+    }
+
+    let activeTargetId = null;
+    try {
+      const activeSaved = JSON.parse(localStorage.getItem('activeTargetProduct') || '{}');
+      activeTargetId = activeSaved.id;
+    } catch (_) {}
+
+    sampleLibraryList.innerHTML = `
+      <div class="sample-list-flat">
+        ${samples.map((s) => {
+          const isActive = s.id === activeTargetId;
+          const thumb = s.sample_image_url || '/static/assets/logo.png';
+          return `
+            <div class="sample-row-flat ${isActive ? 'is-active' : ''}" id="sampleItem-${s.id}">
+              <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; flex: 1;">
+                <img src="${thumb}" alt="${s.product_name}" class="sample-thumb-mini" />
+                <div style="overflow: hidden;">
+                  <div style="font-weight: 600; font-size: 13px;">${s.product_name}</div>
+                  <div style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px;">
+                    <span>Hãng: ${s.brand || 'Chưa rõ'}</span>
+                    <span>Loại: ${s.visual_class || 'Sản phẩm'}</span>
+                    ${s.specs ? `<span>${s.specs}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 6px;">
+                <button class="btn btn-secondary btn-sm" onclick='${isActive ? "clearActiveTarget()" : `selectSampleFromModal(${JSON.stringify(s).replace(/'/g, "&#39;")})`}'>
+                  ${isActive ? 'Bỏ chọn' : 'Chọn'}
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="deleteSampleFromModal(${s.id})" title="Xóa mẫu">
+                  Xóa
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  } catch (err) {
+    sampleLibraryList.innerHTML = `<div style="color: var(--status-danger); padding: 12px; font-size: 13px;">Lỗi tải: ${err.message}</div>`;
+  }
+}
+
+window.openLibraryModal = function() {
+  if (sampleLibraryModal) {
+    sampleLibraryModal.style.display = 'flex';
+    loadSampleLibrary();
   }
 };
+
+window.selectSampleFromModal = function(sample) {
+  setActiveTarget(sample);
+  if (sampleLibraryModal) sampleLibraryModal.style.display = 'none';
+  showToast(`Đã chọn mục tiêu: "${sample.product_name}".`, 'success');
+};
+
+window.deleteSampleFromModal = async function(sampleId) {
+  if (!confirm('Bạn có chắc chắn muốn xóa mẫu sản phẩm này khỏi thư viện vĩnh viễn?')) return;
+  try {
+    const res = await fetch(`/api/vision/samples/${sampleId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Lỗi HTTP ${res.status}`);
+    showToast('Đã xóa mẫu sản phẩm khỏi thư viện.', 'info');
+
+    try {
+      const active = JSON.parse(localStorage.getItem('activeTargetProduct') || '{}');
+      if (active.id === sampleId) {
+        clearActiveTarget();
+      }
+    } catch (_) {}
+
+    loadSampleLibrary();
+    loadRecentSamplesPreview();
+  } catch (e) {
+    showToast(`Không thể xóa mẫu: ${e.message}`, 'error');
+  }
+};
+
+// Event Listeners
+startCameraBtn.addEventListener('click', startCamera);
+stopCameraBtn.addEventListener('click', stopCamera);
+
+if (identifySampleBtn) {
+  identifySampleBtn.addEventListener('click', identifySampleFromCamera);
+}
+
+if (openLibraryBtn) {
+  openLibraryBtn.addEventListener('click', window.openLibraryModal);
+}
+
+if (closeLibraryModalBtn) {
+  closeLibraryModalBtn.addEventListener('click', () => {
+    if (sampleLibraryModal) sampleLibraryModal.style.display = 'none';
+  });
+}
+
+if (sampleLibraryModal) {
+  sampleLibraryModal.addEventListener('click', (e) => {
+    if (e.target === sampleLibraryModal) {
+      sampleLibraryModal.style.display = 'none';
+    }
+  });
+}
+
+// Gemini Key Modal Listeners
+if (btnOpenGeminiModal) {
+  btnOpenGeminiModal.addEventListener('click', openGeminiModal);
+}
+if (closeGeminiModalBtn) {
+  closeGeminiModalBtn.addEventListener('click', closeGeminiModal);
+}
+if (btnCancelGeminiModal) {
+  btnCancelGeminiModal.addEventListener('click', closeGeminiModal);
+}
+if (btnSaveGeminiKey) {
+  btnSaveGeminiKey.addEventListener('click', saveGeminiKeyAction);
+}
+if (btnToggleKeyEye) {
+  btnToggleKeyEye.addEventListener('click', toggleKeyVisibility);
+}
+
+if (geminiKeyModal) {
+  geminiKeyModal.addEventListener('click', (e) => {
+    if (e.target === geminiKeyModal) closeGeminiModal();
+  });
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = localStorage.getItem('activeTargetProduct');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      renderActiveSampleCard(parsed);
+    } else {
+      renderActiveSampleCard(null);
+    }
+  } catch (e) {
+    renderActiveSampleCard(null);
+  }
+  loadRecentSamplesPreview();
+  checkGeminiStatus();
+});

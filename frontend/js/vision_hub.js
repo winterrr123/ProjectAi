@@ -153,7 +153,7 @@ window.VisionHub = (function () {
                 ? 'background:var(--success-light); color:var(--success); border:1px solid var(--success-border);'
                 : 'background:var(--warning-light); color:var(--warning); border:1px solid var(--warning-border);'
             }">
-              ${geminiConfigured ? '✓ Đã Kết Nối API' : 'Chưa Nhập API Key'}
+              ${geminiConfigured ? 'Đã kết nối API' : 'Chưa nhập API key'}
             </span>
           </div>
 
@@ -164,7 +164,7 @@ window.VisionHub = (function () {
               Lưu Key
             </button>
             <button class="btn btn-secondary" id="testSceneBtn" style="padding: 6px 12px; font-size: 0.78rem;">
-              ✨ Quét Toàn Cảnh
+              Quét toàn cảnh
             </button>
           </div>
         </div>
@@ -180,18 +180,18 @@ window.VisionHub = (function () {
               <polygon points="12 8 8 12 12 16 12 8"></polygon>
               <polygon points="12 8 16 12 12 16 12 8"></polygon>
             </svg>
-            <span>Công Cụ AI Thị Giác:</span>
+            <span>Công cụ nhận diện:</span>
           </div>
 
           <div class="vision-segmented-control">
             <button class="vision-segment-btn ${activeEngine === 'standard' ? 'active' : ''}" data-engine="standard">
-              ⚡ YOLOv8 Siêu Tốc
+              YOLOv8 chuẩn
             </button>
             <button class="vision-segment-btn ${activeEngine === 'yolo_world' ? 'active' : ''}" data-engine="yolo_world">
-              🌐 YOLO-World (Vạn Vật)
+              YOLO-World
             </button>
             <button class="vision-segment-btn ${activeEngine === 'hybrid' ? 'active' : ''}" data-engine="hybrid">
-              ✨ Gemini AI (Cloud Vision)
+              Gemini AI
             </button>
           </div>
         </div>

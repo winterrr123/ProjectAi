@@ -20,8 +20,8 @@ class DetectionSession(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     user = relationship("User", back_populates="sessions")
-    detections = relationship("DetectionResult", back_populates="session")
-    counts = relationship("ProductCount", back_populates="session")
+    detections = relationship("DetectionResult", back_populates="session", cascade="all, delete-orphan")
+    counts = relationship("ProductCount", back_populates="session", cascade="all, delete-orphan")
 
 
 class DetectionResult(Base):

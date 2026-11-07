@@ -10,19 +10,29 @@ from __future__ import annotations
 import base64
 import os
 import re
+import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database.crud import SampleCRUD
+from app.database.mysql import get_db_session
+from app.models.user import User
 from app.services.vision_api_service import vision_manager
+from app.utils.auth import get_current_user
 from app.utils.helpers import logger
 
 router = APIRouter(prefix="/api/vision", tags=["vision-ai"])
 
 
 # --- Schemas ---
+class IdentifySamplePayload(BaseModel):
+    image: str
+    api_key: Optional[str] = None
+
 class EngineConfigPayload(BaseModel):
     engine: str  # 'standard', 'yolo_world', 'hybrid'
     classes: Optional[List[str]] = None
@@ -204,3 +214,130 @@ async def analyze_scene(payload: SceneAnalysisPayload):
         raise HTTPException(status_code=502, detail=result.get("error", "Lỗi phân tích Gemini"))
 
     return result
+
+
+@router.post("/identify-sample")
+async def identify_sample(
+    payload: IdentifySamplePayload,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    """
+    Trạm nhận diện mẫu sản phẩm đơn vị (Single-Unit Sample Station):
+    1. Nhận diện nhãn hiệu, phân loại trực quan (visual_class) và quy cách qua Gemini Vision.
+    2. Tự động lưu mẫu vào cơ sở dữ liệu cho tài khoản người dùng hiện tại.
+    """
+    raw_b64 = payload.image
+    if not raw_b64:
+        raise HTTPException(status_code=400, detail="Dữ liệu ảnh mẫu không được để trống.")
+
+    # Keep a copy of data url for sample thumbnail
+    sample_thumbnail = raw_b64 if raw_b64.startswith("data:image") else f"data:image/jpeg;base64,{raw_b64}"
+
+    if "," in raw_b64:
+        raw_b64 = raw_b64.split(",", 1)[1]
+
+    try:
+        image_bytes = base64.b64decode(raw_b64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Dữ liệu base64 không hợp lệ: {e}")
+
+    result = vision_manager.gemini_service.identify_sample_product(
+        image_bytes=image_bytes,
+        api_key=payload.api_key,
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Lỗi nhận diện mẫu sản phẩm"))
+
+    sample_info = result.get("data", {})
+    product_name = sample_info.get("product_name") or "Sản phẩm mẫu"
+    brand = sample_info.get("brand") or "Chưa rõ"
+    category = sample_info.get("category") or "Hàng hóa"
+    visual_class = sample_info.get("visual_class") or "product"
+    specs = sample_info.get("specs") or ""
+
+    # Save image to uploads/samples/{uuid}.jpg instead of storing large Base64 in database
+    samples_dir = settings.UPLOAD_FOLDER / "samples"
+    samples_dir.mkdir(parents=True, exist_ok=True)
+    sample_filename = f"{uuid.uuid4().hex}.jpg"
+    sample_path = samples_dir / sample_filename
+    try:
+        with open(sample_path, "wb") as f:
+            f.write(image_bytes)
+        sample_image_url = f"/api/video/sample-image/{sample_filename}"
+    except Exception as exc:
+        logger.warning("Could not save sample image file: %s", exc)
+        sample_image_url = sample_thumbnail[:500000]
+
+    # Persist in DB
+    created_sample = SampleCRUD.create_sample(
+        db=db,
+        user_id=current_user.id,
+        product_name=product_name,
+        brand=brand,
+        category=category,
+        visual_class=visual_class,
+        sample_image_url=sample_image_url,
+        specs=specs,
+    )
+
+    return {
+        "success": True,
+        "sample": {
+            "id": created_sample.id,
+            "user_id": created_sample.user_id,
+            "product_name": created_sample.product_name,
+            "brand": created_sample.brand,
+            "category": created_sample.category,
+            "visual_class": created_sample.visual_class,
+            "specs": created_sample.specs,
+            "sample_image_url": created_sample.sample_image_url,
+            "created_at": created_sample.created_at.isoformat() if created_sample.created_at else None,
+        },
+    }
+
+
+@router.get("/samples")
+async def list_user_samples(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    """Lấy danh sách các mẫu sản phẩm đã lưu trữ của người dùng hiện tại."""
+    samples = SampleCRUD.get_user_samples(db, user_id=current_user.id)
+    return {
+        "success": True,
+        "samples": [
+            {
+                "id": s.id,
+                "user_id": s.user_id,
+                "product_name": s.product_name,
+                "brand": s.brand,
+                "category": s.category,
+                "visual_class": s.visual_class,
+                "specs": s.specs,
+                "sample_image_url": s.sample_image_url,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in samples
+        ],
+    }
+
+
+@router.delete("/samples/{sample_id}")
+async def delete_user_sample(
+    sample_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+):
+    """Xóa mẫu sản phẩm khỏi thư viện của người dùng."""
+    deleted = SampleCRUD.delete_sample(db, sample_id=sample_id, user_id=current_user.id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy mẫu sản phẩm hoặc bạn không có quyền xóa.",
+        )
+    return {
+        "success": True,
+        "message": "Đã xóa mẫu sản phẩm thành công.",
+    }

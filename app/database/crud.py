@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.detection import DetectionResult, DetectionSession, ProductCount
 from app.models.product import Product
+from app.models.sample import SampleProduct
 from app.models.user import User
 
 
@@ -114,6 +115,22 @@ class SessionCRUD:
         return query.first()
 
     @staticmethod
+    def delete_session(db: Session, session_id: int, user_id: int) -> bool:
+        session = (
+            db.query(DetectionSession)
+            .filter(DetectionSession.id == session_id, DetectionSession.user_id == user_id)
+            .first()
+        )
+        if not session:
+            return False
+
+        db.query(DetectionResult).filter(DetectionResult.session_id == session.id).delete()
+        db.query(ProductCount).filter(ProductCount.session_id == session.id).delete()
+        db.delete(session)
+        db.commit()
+        return True
+
+    @staticmethod
     def get_statistics(db: Session, user_id: Optional[int] = None) -> Dict[str, object]:
         base_session_q = db.query(DetectionSession)
         if user_id is not None:
@@ -169,21 +186,43 @@ class SessionCRUD:
 class DetectionCRUD:
     @staticmethod
     def save_detection_results(db: Session, session_id: int, detections: List[dict]) -> None:
+        if not detections:
+            return
+
+        records = []
         for item in detections:
-            result = DetectionResult(
-                session_id=session_id,
-                tracking_id=item.get("tracking_id"),
-                class_id=item.get("class_id", 0),
-                class_name=item.get("class_name", "Unknown"),
-                confidence=float(item.get("confidence", 0.0)),
-                x1=float(item.get("x1", 0.0)),
-                y1=float(item.get("y1", 0.0)),
-                x2=float(item.get("x2", 0.0)),
-                y2=float(item.get("y2", 0.0)),
-                frame_number=int(item.get("frame_number", 0)),
-                timestamp=float(item.get("timestamp", 0.0)),
-            )
-            db.add(result)
+            if isinstance(item, dict):
+                records.append({
+                    "session_id": session_id,
+                    "tracking_id": item.get("tracking_id"),
+                    "class_id": int(item.get("class_id", 0)),
+                    "class_name": str(item.get("class_name", "Unknown")),
+                    "confidence": float(item.get("confidence", 0.0)),
+                    "x1": float(item.get("x1", 0.0)),
+                    "y1": float(item.get("y1", 0.0)),
+                    "x2": float(item.get("x2", 0.0)),
+                    "y2": float(item.get("y2", 0.0)),
+                    "frame_number": int(item.get("frame_number", 0)),
+                    "timestamp": float(item.get("timestamp", 0.0)),
+                })
+            else:
+                records.append({
+                    "session_id": session_id,
+                    "tracking_id": getattr(item, "tracking_id", None),
+                    "class_id": int(getattr(item, "class_id", 0)),
+                    "class_name": str(getattr(item, "class_name", "Unknown")),
+                    "confidence": float(getattr(item, "confidence", 0.0)),
+                    "x1": float(getattr(item, "x1", 0.0)),
+                    "y1": float(getattr(item, "y1", 0.0)),
+                    "x2": float(getattr(item, "x2", 0.0)),
+                    "y2": float(getattr(item, "y2", 0.0)),
+                    "frame_number": int(getattr(item, "frame_number", 0)),
+                    "timestamp": float(getattr(item, "timestamp", 0.0)),
+                })
+
+        chunk_size = 1000
+        for i in range(0, len(records), chunk_size):
+            db.bulk_insert_mappings(DetectionResult, records[i : i + chunk_size])
         db.commit()
 
     @staticmethod
@@ -200,3 +239,61 @@ class DetectionCRUD:
         if user_id is not None:
             query = query.filter(DetectionSession.user_id == user_id)
         return query.order_by(DetectionSession.started_at.desc()).limit(limit).all()
+
+
+class SampleCRUD:
+    @staticmethod
+    def create_sample(
+        db: Session,
+        user_id: int,
+        product_name: str,
+        brand: Optional[str] = None,
+        category: Optional[str] = None,
+        visual_class: str = "product",
+        sample_image_url: Optional[str] = None,
+        specs: Optional[str] = None,
+    ) -> SampleProduct:
+        sample = SampleProduct(
+            user_id=user_id,
+            product_name=product_name,
+            brand=brand,
+            category=category,
+            visual_class=visual_class,
+            sample_image_url=sample_image_url,
+            specs=specs,
+        )
+        db.add(sample)
+        db.commit()
+        db.refresh(sample)
+        return sample
+
+    @staticmethod
+    def get_user_samples(db: Session, user_id: int) -> List[SampleProduct]:
+        return (
+            db.query(SampleProduct)
+            .filter(SampleProduct.user_id == user_id)
+            .order_by(SampleProduct.created_at.desc())
+            .all()
+        )
+
+    @staticmethod
+    def get_sample_by_id(
+        db: Session, sample_id: int, user_id: Optional[int] = None
+    ) -> Optional[SampleProduct]:
+        query = db.query(SampleProduct).filter(SampleProduct.id == sample_id)
+        if user_id is not None:
+            query = query.filter(SampleProduct.user_id == user_id)
+        return query.first()
+
+    @staticmethod
+    def delete_sample(db: Session, sample_id: int, user_id: int) -> bool:
+        sample = (
+            db.query(SampleProduct)
+            .filter(SampleProduct.id == sample_id, SampleProduct.user_id == user_id)
+            .first()
+        )
+        if sample:
+            db.delete(sample)
+            db.commit()
+            return True
+        return False

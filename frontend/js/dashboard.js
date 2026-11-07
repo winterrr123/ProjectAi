@@ -1,11 +1,11 @@
 /* ==========================================================================
-   AI VISION PRO - DASHBOARD, STATISTICS & HISTORY LOGIC
-   Smooth number counting, modern Chart.js setup, realtime filtering, toasts
+   PRODUCT VISION - DASHBOARD, STATISTICS & HISTORY LOGIC
+   Utility-grade data rendering, table formatters, Chart.js setup, toasts
    ========================================================================== */
 
 const API_BASE = '/api';
 
-// Reusable Toast Notification System
+// Toast Notification System (Flat, 3px left border)
 function showToast(message, type = 'info') {
   let container = document.getElementById('toastContainer');
   if (!container) {
@@ -18,8 +18,8 @@ function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `
-    <div style="flex: 1; font-size: 0.9rem;">${message}</div>
-    <span style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 8px;">✕</span>
+    <div style="flex: 1; font-size: 13px;">${message}</div>
+    <span style="cursor: pointer; opacity: 0.6; margin-left: 8px;" title="Đóng">✕</span>
   `;
 
   toast.querySelector('span').addEventListener('click', () => toast.remove());
@@ -27,43 +27,19 @@ function showToast(message, type = 'info') {
 
   setTimeout(() => {
     toast.style.opacity = '0';
-    toast.style.transform = 'translateX(100%)';
-    toast.style.transition = 'all 0.3s ease';
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
+    toast.style.transition = 'opacity 150ms ease';
+    setTimeout(() => toast.remove(), 150);
+  }, 3500);
 }
 
-// Enhanced Smooth Count-Up Animation (Preserves previous state for seamless realtime transitions)
-function animateValue(element, start, end, duration = 900) {
+// Gentle number transition
+function animateValue(element, start, end, duration = 300) {
   if (!element) return;
-  const fromVal = element._currentVal !== undefined ? element._currentVal : (Number(start) || 0);
   const targetVal = Number(end) || 0;
-  const range = targetVal - fromVal;
-  element._currentVal = targetVal;
-
-  if (range === 0) {
-    element.textContent = targetVal.toLocaleString('vi-VN');
-    return;
-  }
-  let startTime = null;
-
-  function step(timestamp) {
-    if (!startTime) startTime = timestamp;
-    const progress = Math.min((timestamp - startTime) / duration, 1);
-    // Smooth Quartic ease-out
-    const easeOut = 1 - Math.pow(1 - progress, 4);
-    const current = Math.floor(fromVal + range * easeOut);
-    element.textContent = current.toLocaleString('vi-VN');
-    if (progress < 1) {
-      window.requestAnimationFrame(step);
-    } else {
-      element.textContent = targetVal.toLocaleString('vi-VN');
-    }
-  }
-  window.requestAnimationFrame(step);
+  element.textContent = targetVal.toLocaleString('vi-VN');
 }
 
-// Format Datetime
+// Format Datetime (DD/MM/YYYY HH:mm:ss)
 function formatDateTime(isoString) {
   if (!isoString) return 'Chưa kết thúc';
   try {
@@ -100,7 +76,7 @@ async function fetchJson(url) {
 let allSessions = [];
 let currentFilterType = 'ALL';
 
-// Render History Table
+// Render History Table (Real table, sentence case)
 function renderHistoryTable(data) {
   const tbody = document.getElementById('historyRows');
   if (!tbody) return;
@@ -108,8 +84,8 @@ function renderHistoryTable(data) {
   if (!data || data.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">
-          Không tìm thấy phiên nào phù hợp.
+        <td colspan="7" class="table-empty">
+          Chưa có phiên nào.
         </td>
       </tr>
     `;
@@ -119,32 +95,48 @@ function renderHistoryTable(data) {
   tbody.innerHTML = data
     .map((s) => {
       const isVideo = s.session_type === 'VIDEO';
-      const badgeClass = isVideo ? 'badge-video' : 'badge-camera';
-      const typeLabel = isVideo ? 'Video File' : 'Live Camera';
+      const badgeClass = isVideo ? 'tag-video' : 'tag-camera';
+      const typeLabel = isVideo ? 'Video' : 'Camera';
       return `
         <tr>
-          <td><span style="font-family:'JetBrains Mono',monospace; color:var(--primary); font-weight:700;">#${s.id}</span></td>
-          <td><span class="session-type-badge ${badgeClass}">${typeLabel}</span></td>
-          <td>
-            <div style="display:flex; align-items:center; gap:10px;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted); flex-shrink:0;">
-                ${isVideo ? '<polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>' : '<circle cx="12" cy="12" r="3"></circle><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>'}
-              </svg>
-              <span style="font-weight:600; color:var(--text-primary);" title="${s.video_name || 'Camera Stream'}">${s.video_name || 'Trực tiếp (Webcam)'}</span>
-            </div>
-          </td>
-          <td style="font-size:0.85rem; color:var(--text-secondary);">${formatDateTime(s.started_at)}</td>
-          <td style="font-size:0.85rem; color:var(--text-secondary);">${formatDateTime(s.ended_at)}</td>
-          <td>
-            <span style="font-family:'JetBrains Mono',monospace; font-size:1.05rem; font-weight:700; color:var(--primary);">
-              ${s.total_objects || 0}
-            </span>
+          <td class="cell-mono">#${s.id}</td>
+          <td><span class="status-tag ${badgeClass}">${typeLabel}</span></td>
+          <td class="cell-name">${s.video_name || 'Camera trực tiếp'}</td>
+          <td class="cell-sub">${formatDateTime(s.started_at)}</td>
+          <td class="cell-sub">${formatDateTime(s.ended_at)}</td>
+          <td class="cell-count">${(s.total_objects || 0).toLocaleString('vi-VN')}</td>
+          <td style="text-align: center;">
+            <button class="btn btn-secondary btn-sm" onclick="deleteHistorySession(${s.id})" title="Xóa phiên" style="padding: 2px 8px; font-size: 12px; color: #dc2626; border-color: #fecaca;">
+              Xóa
+            </button>
           </td>
         </tr>
       `;
     })
     .join('');
 }
+
+// Delete history session
+async function deleteHistorySession(sessionId) {
+  if (!confirm(`Bạn có chắc muốn xóa phiên #${sessionId} và các tệp báo cáo liên quan?`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || data.detail || 'Không thể xóa phiên');
+    }
+
+    allSessions = allSessions.filter((s) => s.id !== sessionId);
+    applyHistoryFilter();
+    showToast(`Đã xóa phiên #${sessionId} thành công.`, 'success');
+  } catch (err) {
+    showToast(err.message || 'Lỗi khi xóa phiên', 'error');
+  }
+}
+window.deleteHistorySession = deleteHistorySession;
 
 // Filter history data
 function applyHistoryFilter() {
@@ -167,7 +159,7 @@ function applyHistoryFilter() {
   renderHistoryTable(filtered);
   const countBadge = document.getElementById('historyCountBadge');
   if (countBadge) {
-    countBadge.textContent = `${filtered.length} phiên hiển thị`;
+    countBadge.textContent = `${filtered.length} phiên`;
   }
 }
 
@@ -175,15 +167,15 @@ function applyHistoryFilter() {
 let barChartInstance = null;
 let pieChartInstance = null;
 
-// Palette for charts - clean SaaS indigo, emerald, amber, violet, teal
+// Palette for charts - utility flat colors
 const chartColors = [
   '#2563eb', // blue
+  '#475569', // slate
   '#059669', // emerald
   '#d97706', // amber
   '#7c3aed', // purple
   '#0284c7', // cyan
-  '#db2777', // pink
-  '#ea580c', // orange
+  '#dc2626', // red
   '#0d9488', // teal
 ];
 
@@ -213,27 +205,50 @@ async function loadDashboard() {
     const totalClassesEl = document.getElementById('totalClasses');
     if (totalClassesEl) animateValue(totalClassesEl, 0, classEntries.length);
 
-    // 2. Class Summary Pills (index.html)
+    // 2. Class Summary Table (index.html) - Real table with thin horizontal bar
     const classSummary = document.getElementById('classSummary');
     if (classSummary) {
       if (classEntries.length > 0) {
-        classSummary.innerHTML = classEntries
-          .map(([name, count], index) => {
-            const color = chartColors[index % chartColors.length];
-            return `
-              <div class="class-pill">
-                <span class="class-pill-dot" style="background:${color};"></span>
-                <span style="font-weight:600; color:var(--text-primary);">${name}</span>
-                <span class="class-pill-count" style="color:${color};">${count}</span>
-              </div>
-            `;
-          })
-          .join('');
+        const totalObj = stats.total_objects || 1;
+        classSummary.innerHTML = `
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Tên nhãn</th>
+                  <th style="width: 90px; text-align: right;">Số lượng</th>
+                  <th style="width: 140px;">Tỉ lệ</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${classEntries
+                  .map(([name, count]) => {
+                    const pct = Math.round((count / totalObj) * 100) || 0;
+                    return `
+                      <tr>
+                        <td style="font-weight: 500;">${name}</td>
+                        <td style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;">
+                          ${count.toLocaleString('vi-VN')}
+                        </td>
+                        <td>
+                          <div class="progress-bar-wrap">
+                            <div class="progress-bar-track">
+                              <div class="progress-bar-fill" style="width: ${pct}%;"></div>
+                            </div>
+                            <span class="progress-bar-text">${pct}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    `;
+                  })
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
       } else {
         classSummary.innerHTML = `
-          <div style="color: var(--text-muted); font-size: 0.9rem; padding: 12px 0;">
-            Chưa có nhãn sản phẩm nào được lưu trữ. Hãy tải video hoặc bật camera để bắt đầu!
-          </div>
+          <div class="empty-state">Chưa có nhãn sản phẩm nào. Hãy tải video để bắt đầu.</div>
         `;
       }
     }
@@ -242,37 +257,42 @@ async function loadDashboard() {
     const recentSessionsEl = document.getElementById('recentSessions');
     if (recentSessionsEl) {
       if (sessions.length > 0) {
-        recentSessionsEl.innerHTML = sessions.slice(0, 6)
-          .map((s, index) => {
-            const isVideo = s.session_type === 'VIDEO';
-            const badgeClass = isVideo ? 'badge-video' : 'badge-camera';
-            const typeLabel = isVideo ? 'VIDEO' : 'CAMERA';
-            return `
-              <li class="session-item enter-anim" style="animation: itemSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) ${index * 55}ms both;">
-                <div class="session-info">
-                  <span class="session-type-badge ${badgeClass}">${typeLabel}</span>
-                  <div>
-                    <div class="session-name" title="${s.video_name || 'Camera Stream'}">
-                      ${s.video_name || 'Camera Stream'}
-                    </div>
-                    <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 2px;">
-                      ${formatDateTime(s.started_at)}
-                    </div>
-                  </div>
-                </div>
-                <div class="session-count-box">
-                  <strong>${s.total_objects || 0}</strong>
-                  <span>vật thể</span>
-                </div>
-              </li>
-            `;
-          })
-          .join('');
+        recentSessionsEl.innerHTML = `
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Mã</th>
+                  <th>Nguồn</th>
+                  <th>Tên tệp</th>
+                  <th>Thời gian</th>
+                  <th style="text-align: right;">Số lượng</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sessions.slice(0, 6)
+                  .map((s) => {
+                    const isVideo = s.session_type === 'VIDEO';
+                    const badgeClass = isVideo ? 'tag-video' : 'tag-camera';
+                    const typeLabel = isVideo ? 'Video' : 'Camera';
+                    return `
+                      <tr>
+                        <td class="cell-mono">#${s.id}</td>
+                        <td><span class="status-tag ${badgeClass}">${typeLabel}</span></td>
+                        <td class="cell-name">${s.video_name || 'Camera trực tiếp'}</td>
+                        <td class="cell-sub">${formatDateTime(s.started_at)}</td>
+                        <td class="cell-count" style="text-align: right;">${(s.total_objects || 0).toLocaleString('vi-VN')}</td>
+                      </tr>
+                    `;
+                  })
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
       } else {
         recentSessionsEl.innerHTML = `
-          <li class="session-item" style="color: var(--text-muted); justify-content: center; padding: 24px;">
-            Chưa có phiên nhận diện nào được tạo.
-          </li>
+          <div class="empty-state">Chưa có phiên nhận diện nào.</div>
         `;
       }
     }
@@ -287,7 +307,7 @@ async function loadDashboard() {
     const avgConfidenceEl = document.getElementById('avgConfidence');
     if (avgConfidenceEl) {
       const conf = Number(stats.average_confidence || 0);
-      avgConfidenceEl.textContent = conf > 0 ? `${(conf * 100).toFixed(1)}%` : 'N/A';
+      avgConfidenceEl.textContent = conf > 0 ? `${(conf * 100).toFixed(1)}%` : '0%';
     }
 
     // Render Leaderboard in Statistics
@@ -298,28 +318,20 @@ async function loadDashboard() {
 
       if (sortedClasses.length > 0) {
         leaderboardRows.innerHTML = sortedClasses
-          .map(([name, count], index) => {
-            const pct = Math.round((count / totalObj) * 100);
-            const color = chartColors[index % chartColors.length];
+          .map(([name, count]) => {
+            const pct = Math.round((count / totalObj) * 100) || 0;
             return `
               <tr>
-                <td>
-                  <div style="display:flex; align-items:center; gap:10px;">
-                    <span style="width:9px; height:9px; border-radius:50%; background:${color}; flex-shrink:0;"></span>
-                    <strong style="color:var(--text-primary); font-weight:600;">${name}</strong>
-                  </div>
+                <td style="font-weight: 500;">${name}</td>
+                <td style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;">
+                  ${count.toLocaleString('vi-VN')}
                 </td>
-                <td>
-                  <span style="font-weight:700; color:var(--primary); font-size:1rem;">
-                    ${count}
-                  </span>
-                </td>
-                <td>
-                  <span style="font-weight:600; color:var(--text-secondary);">${pct}%</span>
-                </td>
-                <td style="min-width: 130px;">
-                  <div style="height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden;">
-                    <div style="width: ${pct}%; height: 100%; background: ${color}; border-radius: 999px; transition: width 0.4s ease;"></div>
+                <td style="font-variant-numeric: tabular-nums;">${pct}%</td>
+                <td style="min-width: 140px;">
+                  <div class="progress-bar-wrap">
+                    <div class="progress-bar-track">
+                      <div class="progress-bar-fill" style="width: ${pct}%;"></div>
+                    </div>
                   </div>
                 </td>
               </tr>
@@ -329,7 +341,7 @@ async function loadDashboard() {
       } else {
         leaderboardRows.innerHTML = `
           <tr>
-            <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">
+            <td colspan="4" class="table-empty">
               Chưa có dữ liệu thống kê sản phẩm.
             </td>
           </tr>
@@ -339,8 +351,9 @@ async function loadDashboard() {
 
     // 5. Chart.js Setup
     if (window.Chart) {
-      Chart.defaults.color = '#64748b';
-      Chart.defaults.font.family = "'Plus Jakarta Sans', system-ui, sans-serif";
+      Chart.defaults.color = '#6b7280';
+      Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+      Chart.defaults.font.size = 12;
 
       const labels = classEntries.map((c) => c[0]);
       const dataValues = classEntries.map((c) => c[1]);
@@ -356,10 +369,9 @@ async function loadDashboard() {
               {
                 label: 'Số lượng phát hiện',
                 data: dataValues.length ? dataValues : [0],
-                backgroundColor: labels.map((_, i) => chartColors[i % chartColors.length]),
-                borderRadius: 8,
-                borderSkipped: false,
-                barThickness: 28,
+                backgroundColor: '#2563eb',
+                borderRadius: 2,
+                barThickness: 24,
               },
             ],
           },
@@ -369,24 +381,20 @@ async function loadDashboard() {
             plugins: {
               legend: { display: false },
               tooltip: {
-                backgroundColor: '#0f172a',
-                titleColor: '#ffffff',
-                bodyColor: '#93c5fd',
-                borderColor: '#1e293b',
-                borderWidth: 1,
-                padding: 12,
-                cornerRadius: 8,
+                backgroundColor: '#1d2125',
+                padding: 8,
+                cornerRadius: 4,
               },
             },
             scales: {
               x: {
                 grid: { display: false },
-                ticks: { color: '#64748b', font: { weight: 600 } },
+                ticks: { color: '#6b7280' },
               },
               y: {
                 beginAtZero: true,
-                grid: { color: '#f1f5f9' },
-                ticks: { precision: 0, color: '#64748b' },
+                grid: { color: '#e3e5e8' },
+                ticks: { precision: 0, color: '#6b7280' },
               },
             },
           },
@@ -405,34 +413,29 @@ async function loadDashboard() {
                 data: dataValues.length ? dataValues : [1],
                 backgroundColor: labels.length
                   ? labels.map((_, i) => chartColors[i % chartColors.length])
-                  : ['#e2e8f0'],
+                  : ['#e5e7eb'],
                 borderColor: '#ffffff',
-                borderWidth: 3,
-                hoverOffset: 6,
+                borderWidth: 2,
               },
             ],
           },
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            cutout: '70%',
+            cutout: '65%',
             plugins: {
               legend: {
                 position: 'bottom',
                 labels: {
-                  boxWidth: 12,
-                  padding: 16,
-                  color: '#334155',
-                  font: { weight: 600 },
+                  boxWidth: 10,
+                  padding: 12,
+                  color: '#1d2125',
                 },
               },
               tooltip: {
-                backgroundColor: '#0f172a',
-                titleColor: '#ffffff',
-                borderColor: '#1e293b',
-                borderWidth: 1,
-                padding: 12,
-                cornerRadius: 8,
+                backgroundColor: '#1d2125',
+                padding: 8,
+                cornerRadius: 4,
               },
             },
           },
@@ -484,11 +487,11 @@ async function loadDashboard() {
       });
 
       refreshBtn?.addEventListener('click', () => {
-        refreshBtn.style.opacity = '0.5';
+        refreshBtn.disabled = true;
         showToast('Đang làm mới dữ liệu lịch sử...', 'info');
         loadDashboard().then(() => {
-          refreshBtn.style.opacity = '1';
-          showToast('Đã cập nhật danh sách phiên thành công!', 'success');
+          refreshBtn.disabled = false;
+          showToast('Đã cập nhật danh sách phiên.', 'success');
         });
       });
 
@@ -497,80 +500,11 @@ async function loadDashboard() {
     }
   } catch (error) {
     console.error('Lỗi khi tải dữ liệu thống kê:', error);
-    showToast('Không thể kết nối đến máy chủ API', 'error');
-  }
-}
-
-// ==========================================================================
-// Subtle 3D Mouse Parallax & Card Tilt Engine
-// ==========================================================================
-function init3DInteractions() {
-  const isReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  // 1. Dynamic Topbar Scroll state
-  const topbar = document.querySelector('.topbar');
-  if (topbar) {
-    const handleScroll = () => {
-      if (window.scrollY > 15) {
-        topbar.classList.add('scrolled');
-      } else {
-        topbar.classList.remove('scrolled');
-      }
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-  }
-
-  if (isReducedMotion) return;
-
-  // Check if touch device - avoid cursor parallax on mobile/tablets
-  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  if (isTouchDevice) return;
-
-  // 2. 3D Tilt on KPI Stat Cards (subtle 2-3 degrees)
-  const statCards = document.querySelectorAll('.stat-card');
-  statCards.forEach((card) => {
-    card.addEventListener('mousemove', (e) => {
-      const rect = card.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
-      const rotateX = ((y - centerY) / centerY) * -2.4;
-      const rotateY = ((x - centerX) / centerX) * 2.4;
-
-      card.style.transform = `perspective(1000px) translateY(-6px) scale(1.012) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
-    });
-
-    card.addEventListener('mouseleave', () => {
-      card.style.transform = '';
-    });
-  });
-
-  // 3. Subtle Mouse Parallax on Hero Banner (5-12px drift)
-  const hero = document.getElementById('heroBanner');
-  if (hero) {
-    const orb1 = hero.querySelector('.orb-blue');
-    const orb2 = hero.querySelector('.orb-purple');
-
-    hero.addEventListener('mousemove', (e) => {
-      const rect = hero.getBoundingClientRect();
-      const normX = (e.clientX - rect.left) / rect.width - 0.5;
-      const normY = (e.clientY - rect.top) / rect.height - 0.5;
-
-      if (orb1) orb1.style.transform = `translate(${normX * -14}px, ${normY * -10}px)`;
-      if (orb2) orb2.style.transform = `translate(${normX * 12}px, ${normY * 14}px)`;
-    });
-
-    hero.addEventListener('mouseleave', () => {
-      if (orb1) orb1.style.transform = '';
-      if (orb2) orb2.style.transform = '';
-    });
+    showToast('Không thể kết nối đến máy chủ.', 'error');
   }
 }
 
 // Execute on DOM Ready
 document.addEventListener('DOMContentLoaded', () => {
   loadDashboard();
-  init3DInteractions();
 });

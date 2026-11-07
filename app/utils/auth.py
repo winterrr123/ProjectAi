@@ -17,8 +17,17 @@ from app.models.user import User
 from app.utils.helpers import logger
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
+def create_access_token(
+    data: Optional[dict] = None,
+    expires_delta: Optional[timedelta] = None,
+    user_id: Optional[int] = None,
+    email: Optional[str] = None,
+) -> str:
+    to_encode = data.copy() if data else {}
+    if user_id is not None:
+        to_encode["sub"] = str(user_id)
+    if email is not None:
+        to_encode["email"] = email
     now = datetime.now(timezone.utc)
     if expires_delta:
         expire = now + expires_delta

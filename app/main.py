@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Optional
 
 import cv2
@@ -23,12 +24,14 @@ from app.database.mysql import SessionLocal, init_db
 from app.models.user import User
 from app.utils.auth import decode_access_token, get_current_user, get_token_from_request
 from app.services.camera_service import CameraService
+from app.services.excel_service import generate_counting_excel
 from app.services.tracking_service import ByteTrackService
 from app.services.video_service import VideoProcessingService
 from app.schemas.detection_schema import (
     CameraSessionPayload,
     DetectionRequest,
     DetectionResponse,
+    ExportExcelRequest,
     FrameDetectionPayload,
     SaveLiveSessionPayload,
 )
@@ -173,6 +176,16 @@ async def serve_video_file(filename: str):
         else:
             raise HTTPException(status_code=404, detail="Video file not found")
     return FileResponse(path=str(file_path), media_type="video/mp4")
+
+
+@app.get("/api/video/sample-image/{filename}")
+async def serve_sample_image(filename: str):
+    safe_name = os.path.basename(filename)
+    file_path = settings.UPLOAD_FOLDER / "samples" / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Sample image not found")
+    media_type = "image/png" if safe_name.lower().endswith(".png") else "image/jpeg"
+    return FileResponse(path=str(file_path), media_type=media_type, filename=safe_name)
 
 
 @app.post("/api/detect/frame")
@@ -484,6 +497,61 @@ async def get_session(session_id: int, current_user: User = Depends(get_current_
             db.close()
 
 
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: int, current_user: User = Depends(get_current_user)):
+    db = None
+    try:
+        db = SessionLocal()
+        session = SessionCRUD.get_session_by_id(db, session_id, user_id=current_user.id)
+        if not session:
+            raise HTTPException(
+                status_code=404,
+                detail="Phiên kiểm đếm không tồn tại hoặc bạn không có quyền xóa",
+            )
+
+        # Xóa bản ghi trong DB (bao gồm DetectionResult và ProductCount liên quan)
+        deleted = SessionCRUD.delete_session(db, session_id=session.id, user_id=current_user.id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Không thể xóa phiên kiểm đếm")
+
+        # Dọn dẹp các file kết quả liên quan trên đĩa (output video, excel)
+        deleted_files = []
+        patterns = [
+            f"processed_{session_id}_*",
+            f"report_session_{session_id}_*",
+            f"*session_{session_id}_*",
+            f"*session_{session_id}.*",
+        ]
+        seen_paths = set()
+        for pattern in patterns:
+            for file_path in settings.OUTPUT_FOLDER.glob(pattern):
+                if file_path in seen_paths:
+                    continue
+                seen_paths.add(file_path)
+                try:
+                    if file_path.is_file():
+                        file_path.unlink()
+                        deleted_files.append(file_path.name)
+                        logger.info("Deleted session result file: %s", file_path.name)
+                except Exception as exc:
+                    logger.warning("Could not delete session file %s: %s", file_path, exc)
+
+        return {
+            "success": True,
+            "message": "Đã xóa phiên kiểm đếm và dọn dẹp file kết quả liên quan",
+            "session_id": session_id,
+            "deleted_files": deleted_files,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error while deleting session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Lỗi khi xóa phiên kiểm đếm")
+    finally:
+        if db is not None:
+            db.close()
+
+
 @app.get("/api/statistics")
 async def statistics(current_user: User = Depends(get_current_user)):
     db = None
@@ -547,11 +615,50 @@ async def get_video_result(session_id: int, current_user: User = Depends(get_cur
             db.close()
 
 
+@app.post("/api/video/export-excel")
+async def export_excel_report(payload: ExportExcelRequest, current_user: User = Depends(get_current_user)):
+    try:
+        now_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        clean_name = os.path.splitext(os.path.basename(payload.video_name or "report"))[0]
+        excel_filename = f"Bao_Cao_Kiem_Dem_{clean_name}_{now_tag}.xlsx"
+        excel_path = str(settings.OUTPUT_FOLDER / excel_filename)
+
+        by_class = payload.by_class or {}
+        total_count = payload.total_count or 0
+        if not by_class and total_count > 0:
+            by_class = {payload.target_name or "Sản phẩm": total_count}
+
+        generate_counting_excel(
+            output_path=excel_path,
+            video_name=payload.video_name or "Video kiểm đếm",
+            total_objects=total_count,
+            by_class=by_class,
+            target_name=payload.target_name,
+            session_id=payload.session_id,
+            detections=payload.detections,
+        )
+
+        return FileResponse(
+            path=excel_path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=excel_filename,
+        )
+    except Exception as exc:
+        logger.exception("Export Excel failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Không thể xuất file Excel: {exc}")
+
+
 @app.get("/api/video/output/{filename}")
 async def serve_output(filename: str):
     file_path = settings.OUTPUT_FOLDER / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Output file not found")
+    if filename.endswith(".xlsx"):
+        return FileResponse(
+            path=str(file_path),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=filename,
+        )
     return FileResponse(path=str(file_path), media_type="video/mp4")
 
 
@@ -560,4 +667,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"success": False, "message": exc.detail})
 
 
+samples_dir = settings.UPLOAD_FOLDER / "samples"
+samples_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads/samples", StaticFiles(directory=str(samples_dir)), name="samples")
 app.mount("/frontend", StaticFiles(directory=str(settings.FRONTEND_DIR)), name="frontend")

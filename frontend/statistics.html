@@ -3,199 +3,177 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Thống Kê Phân Tích - Product Vision</title>
+    <title>Thống kê - Product Vision</title>
     <link rel="icon" type="image/png" href="/static/assets/logo.png" />
-    <link rel="stylesheet" href="/static/css/style.css?v=4.1" />
+    <link rel="stylesheet" href="/static/css/style.css?v=5.0" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
-    <div class="container">
-      <!-- Modern Navigation Bar -->
-      <header class="topbar">
-        <a href="/" class="brand-wrapper">
-          <div class="brand-icon">
-            <img src="/static/assets/logo.png" alt="Product Vision Logo" class="brand-logo-img" />
-          </div>
-          <div class="brand-title">
-            <h1>Product Vision</h1>
-            <span>Báo Cáo & Thống Kê</span>
-          </div>
-        </a>
+    <div class="app-shell">
+      <!-- Sidebar trái cố định -->
+      <aside class="app-sidebar">
+        <div class="sidebar-header">
+          <a href="/" class="sidebar-brand">
+            <div class="brand-icon-box">
+              <img src="/static/assets/logo.png" alt="Product Vision" />
+            </div>
+            <div class="brand-text">
+              <span class="brand-title">Product Vision</span>
+              <span class="brand-subtitle">Hệ thống đếm sản phẩm</span>
+            </div>
+          </a>
+        </div>
 
-        <nav class="nav-actions">
-          <a href="/" class="nav-link">
+        <nav class="sidebar-nav">
+          <a href="/" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="7" height="7"></rect>
               <rect x="14" y="3" width="7" height="7"></rect>
               <rect x="14" y="14" width="7" height="7"></rect>
               <rect x="3" y="14" width="7" height="7"></rect>
             </svg>
-            Tổng quan
+            <span>Tổng quan</span>
           </a>
-          <a href="/upload" class="nav-link">
+          <a href="/upload" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="17 8 12 3 7 8"></polyline>
               <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
-            Đếm qua Video
+            <span>Đếm qua video</span>
           </a>
-          <a href="/camera" class="nav-link">
+          <a href="/camera" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
               <circle cx="12" cy="13" r="4"></circle>
             </svg>
-            Live Camera
+            <span>Camera trực tiếp</span>
           </a>
-          <a href="/statistics" class="nav-link active">
+          <a href="/statistics" class="nav-item active">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="20" x2="18" y2="10"></line>
               <line x1="12" y1="20" x2="12" y2="4"></line>
               <line x1="6" y1="20" x2="6" y2="14"></line>
             </svg>
-            Thống kê
+            <span>Thống kê</span>
           </a>
-          <a href="/history" class="nav-link">
+          <a href="/history" class="nav-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"></circle>
               <polyline points="12 6 12 12 16 14"></polyline>
             </svg>
-            Lịch sử
+            <span>Lịch sử</span>
           </a>
         </nav>
 
-        <div id="userProfileNav" class="user-profile-header"></div>
-      </header>
-
-      <!-- Clean Page Intro Header -->
-      <section class="page-intro">
-        <div class="intro-content">
-          <h2 class="intro-title">Báo Cáo & Thống Kê Phân Tích</h2>
-          <p class="intro-description">
-            Tổng hợp dữ liệu kiểm đếm, tỷ trọng cơ cấu danh mục hàng hóa và hiệu suất nhận diện của hệ thống.
-          </p>
+        <div class="sidebar-footer">
+          <div id="userProfileNav" class="user-profile-slot"></div>
         </div>
-        <div class="intro-actions">
-          <a href="/upload" class="btn btn-primary">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-            Tải Video Mới
-          </a>
-        </div>
-      </section>
+      </aside>
 
-      <!-- Modern Flat Metric Bar (Zero nested cards) -->
-      <section class="metric-strip">
-        <div class="metric-item">
-          <span class="metric-label">Tổng Số Phiên</span>
-          <div class="metric-value-wrap">
-            <strong id="totalSessions">0</strong>
-          </div>
-          <div class="metric-caption">
-            <span class="status-indicator"></span>
-            <span>Tất cả nguồn dữ liệu</span>
-          </div>
-        </div>
-
-        <div class="metric-item">
-          <span class="metric-label">Phiên Video</span>
-          <div class="metric-value-wrap">
-            <strong id="totalVideoSessions">0</strong>
-          </div>
-          <div class="metric-caption">
-            <span>Video đã phân tích</span>
-          </div>
-        </div>
-
-        <div class="metric-item">
-          <span class="metric-label">Phiên Live Camera</span>
-          <div class="metric-value-wrap">
-            <strong id="cameraSessions">0</strong>
-          </div>
-          <div class="metric-caption">
-            <span>Camera trực tiếp</span>
-          </div>
-        </div>
-
-        <div class="metric-item">
-          <span class="metric-label">Độ Tin Cậy Trung Bình</span>
-          <div class="metric-value-wrap">
-            <strong id="avgConfidence">0.0%</strong>
-          </div>
-          <div class="metric-caption">
-            <span>Mức độ chính xác nhận diện</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Charts Row (2 Clean Visualization Sheets) -->
-      <div class="charts-row">
-        <!-- Bar Chart -->
-        <div class="chart-card">
-          <div class="chart-header">
-            <div>
-              <h3 class="sheet-title">Số Lượng Theo Chủng Loại</h3>
-              <p class="sheet-desc">Phân bố tổng sản phẩm từng nhãn hàng hóa</p>
+      <!-- Nội dung chính -->
+      <main class="app-main">
+        <div class="content-wrap">
+          <div class="page-header">
+            <div class="page-header-text">
+              <h1 class="page-title">Thống kê</h1>
+              <p class="page-desc">Báo cáo số liệu kiểm đếm, phân bổ theo nhãn hàng và độ chính xác nhận diện.</p>
             </div>
-            <span class="sheet-badge">Biểu đồ cột</span>
-          </div>
-          <div class="chart-container">
-            <canvas id="barChart"></canvas>
-          </div>
-        </div>
-
-        <!-- Pie / Doughnut Chart -->
-        <div class="chart-card">
-          <div class="chart-header">
-            <div>
-              <h3 class="sheet-title">Tỷ Lệ Cơ Cấu Sản Phẩm</h3>
-              <p class="sheet-desc">Tỷ trọng phần trăm từng nhóm mặt hàng</p>
+            <div class="page-header-actions">
+              <a href="/upload" class="btn btn-primary">
+                Tải video mới
+              </a>
             </div>
-            <span class="sheet-badge">Biểu đồ tròn</span>
           </div>
-          <div class="chart-container">
-            <canvas id="pieChart"></canvas>
-          </div>
-        </div>
-      </div>
 
-      <!-- Leaderboard Table -->
-      <section class="section-sheet" style="margin-top: 24px;">
-        <div class="sheet-header">
-          <div>
-            <h3 class="sheet-title">Chi Tiết Phân Phối Nhãn Sản Phẩm</h3>
-            <p class="sheet-desc">Xếp hạng mức độ phổ biến và tỷ lệ chiếm của từng nhóm mặt hàng</p>
+          <!-- Số liệu tổng quan dạng hàng phẳng -->
+          <div class="metric-row">
+            <div class="metric-cell">
+              <span class="metric-cell-label">Tổng số phiên</span>
+              <div class="metric-cell-val" id="totalSessions">0</div>
+              <span class="metric-cell-sub">Tất cả nguồn dữ liệu</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-cell-label">Phiên video</span>
+              <div class="metric-cell-val" id="totalVideoSessions">0</div>
+              <span class="metric-cell-sub">Video đã phân tích</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-cell-label">Phiên camera trực tiếp</span>
+              <div class="metric-cell-val" id="cameraSessions">0</div>
+              <span class="metric-cell-sub">Camera trực tiếp</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-cell-label">Độ tin cậy trung bình</span>
+              <div class="metric-cell-val" id="avgConfidence">0.0%</div>
+              <span class="metric-cell-sub">Độ chính xác nhận diện</span>
+            </div>
           </div>
-          <span class="sheet-badge">Bảng phân tích</span>
-        </div>
 
-        <div class="table-responsive">
-          <table class="modern-table">
-            <thead>
-              <tr>
-                <th>Tên Nhãn Sản Phẩm</th>
-                <th>Số Lượng Ghi Nhận</th>
-                <th>Tỷ Lệ Chiếm</th>
-                <th>Mức Độ Phổ Biến</th>
-              </tr>
-            </thead>
-            <tbody id="leaderboardRows">
-              <tr>
-                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">
-                  Đang tổng hợp dữ liệu...
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <!-- 2 Biểu đồ thống kê -->
+          <div style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 20px;">
+            <div class="card" style="margin-bottom: 0;">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">Số lượng theo chủng loại</h2>
+                  <p class="card-subtitle">Phân bổ tổng sản phẩm từng nhãn hàng</p>
+                </div>
+              </div>
+              <div style="height: 240px; position: relative;">
+                <canvas id="barChart"></canvas>
+              </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 0;">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">Tỉ lệ cơ cấu sản phẩm</h2>
+                  <p class="card-subtitle">Tỉ trọng phần trăm từng nhóm mặt hàng</p>
+                </div>
+              </div>
+              <div style="height: 240px; position: relative;">
+                <canvas id="pieChart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bảng chi tiết phân phối nhãn -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Chi tiết phân phối nhãn sản phẩm</h2>
+                <p class="card-subtitle">Xếp hạng mức độ phổ biến và tỉ lệ chiếm của từng nhóm mặt hàng</p>
+              </div>
+            </div>
+
+            <div class="table-responsive" style="border: none;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Tên nhãn sản phẩm</th>
+                    <th style="width: 120px; text-align: right;">Số lượng ghi nhận</th>
+                    <th style="width: 90px;">Tỉ lệ chiếm</th>
+                    <th style="width: 180px;">Mức độ phổ biến</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboardRows">
+                  <tr>
+                    <td colspan="4" class="table-empty">
+                      Đang tổng hợp dữ liệu…
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
-      </section>
+      </main>
     </div>
 
-    <!-- Toast Container -->
+    <!-- Toast container -->
     <div id="toastContainer" class="toast-container"></div>
 
     <script src="/static/js/dashboard.js"></script>
-    <script src="/static/js/auth.js?v=3.6"></script>
+    <script src="/static/js/auth.js?v=5.0"></script>
   </body>
 </html>

@@ -1,19 +1,47 @@
 from __future__ import annotations
 
+import gc
 import math
 import os
+import re
 import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import torch
 
 from app.config import settings
 from app.services.counting_service import CountingService
+from app.services.vision_api_service import normalize_visual_class
 from app.services.yolo_service import YOLOService
 from app.utils.drawing import draw_detection_overlay
 from app.utils.helpers import get_video_output_path, logger
+
+
+def is_matching_target(det_class_name: Optional[str], target_class: Optional[str]) -> bool:
+    """
+    Check if a detection class matches the user-specified target product visual class.
+    Provides strict noise suppression for non-target objects (people, chairs, tables, other items).
+    """
+    if not target_class or target_class.strip().lower() in ("all", "*", "tat ca", "tất cả"):
+        return True
+
+    det_lower = (det_class_name or "").lower().strip()
+    tgt_lower = target_class.lower().strip()
+
+    # Direct match or word boundary match
+    if det_lower == tgt_lower or re.search(r"\b" + re.escape(tgt_lower) + r"\b", det_lower):
+        return True
+
+    # Normalized COCO/YOLO visual class matching
+    norm_det = normalize_visual_class(det_lower)
+    norm_tgt = normalize_visual_class(tgt_lower)
+    if norm_det not in ("product", "unknown") and norm_tgt not in ("product", "unknown") and norm_det == norm_tgt:
+        return True
+
+    return False
 
 
 def calculate_box_iou(box1: Tuple[float, float, float, float], box2: Tuple[float, float, float, float]) -> float:
@@ -58,7 +86,13 @@ class VideoProcessingService:
             "message": "",
         }
 
-    def process_video(self, video_path: str, output_path: Optional[str] = None) -> Dict[str, Any]:
+    def process_video(
+        self,
+        video_path: str,
+        output_path: Optional[str] = None,
+        target_class: Optional[str] = None,
+        target_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -123,8 +157,14 @@ class VideoProcessingService:
                 else:
                     raw_detections = last_raw_detections
 
-                # Apply advanced Re-ID and smoothing
-                tracked = self._post_process(raw_detections, frame_number, start)
+                # Apply advanced Re-ID and smoothing with targeted product filtering
+                tracked = self._post_process(
+                    raw_detections,
+                    frame_number,
+                    start,
+                    target_class=target_class,
+                    target_name=target_name,
+                )
                 self.counter.process(tracked)
                 accumulated = self.counter.get_accumulated_counts()
                 final_counts = accumulated
@@ -144,13 +184,16 @@ class VideoProcessingService:
         finally:
             cap.release()
             writer.release()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
 
         self.progress = {
             "percent": 100,
             "current_frame": frame_number,
             "total_frames": total_frames,
             "status": "completed",
-            "message": "Xử lý và xuất video MP4 hoàn tất!",
+            "message": "Xử lý và tạo báo cáo Excel hoàn tất!",
         }
 
         summary = {
@@ -170,12 +213,20 @@ class VideoProcessingService:
         frame_number: int = 1,
         timestamp: Optional[float] = None,
         generate_overlay: bool = False,
+        target_class: Optional[str] = None,
+        target_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         timestamp = timestamp if timestamp is not None else time.time()
         # Use YOLO tracker inference
         raw_detections = self.yolo_service.track_infer(frame, settings.CONFIDENCE_THRESHOLD)
-        # Apply intelligent Re-ID and trajectory smoothing
-        tracked = self._post_process(raw_detections, frame_number, timestamp)
+        # Apply intelligent Re-ID, targeted product filtering, and trajectory smoothing
+        tracked = self._post_process(
+            raw_detections,
+            frame_number,
+            timestamp,
+            target_class=target_class,
+            target_name=target_name,
+        )
         new_counts = self.counter.process(tracked)
         accumulated_counts = self.counter.get_accumulated_counts()
         total = self.counter.get_total_accumulated()
@@ -189,20 +240,36 @@ class VideoProcessingService:
         }
         return result
 
-    def _post_process(self, detections: List[dict], frame_number: int, timestamp: float) -> List[dict]:
+    def _post_process(
+        self,
+        detections: List[dict],
+        frame_number: int,
+        timestamp: float,
+        target_class: Optional[str] = None,
+        target_name: Optional[str] = None,
+    ) -> List[dict]:
         """
         Post-process detections:
+        - Strict noise suppression: filter out non-target objects when target_class is set
         - Geometric validation (reject noise / full-screen background)
         - Resolution-adaptive Re-identification (prevent ID-switch from re-counting lost objects)
         - Scale-invariant fallback spatial tracking for custom models
         - EMA box smoothing (alpha = 0.45)
-        - Uniform naming: 'Sản phẩm' (AGENTS.md compliance)
+        - Target naming or uniform naming: 'Sản phẩm'
         """
         tracked: List[dict] = []
         smooth_alpha = 0.45
         assigned_tids: set = set()
 
         for det in detections:
+            # Noise suppression: discard any object that doesn't match the selected sample visual class
+            if target_class:
+                matches = is_matching_target(det.get("class_name", ""), target_class) or (
+                    bool(det.get("raw_name")) and is_matching_target(det.get("raw_name", ""), target_class)
+                )
+                if not matches:
+                    continue
+
             raw_box = (float(det["x1"]), float(det["y1"]), float(det["x2"]), float(det["y2"]))
             bw = raw_box[2] - raw_box[0]
             bh = raw_box[3] - raw_box[1]
@@ -315,8 +382,13 @@ class VideoProcessingService:
 
             assigned_tids.add(resolved_tid)
 
-            # Uniform naming compliance (AGENTS.md)
-            det["class_name"] = "Sản phẩm"
+            # Target product naming or uniform standard naming
+            if target_name:
+                det["class_name"] = target_name
+            elif target_class:
+                det["class_name"] = target_class.title()
+            else:
+                det["class_name"] = "Sản phẩm"
             det["class_id"] = 1
 
             # Box EMA smoothing
@@ -389,5 +461,8 @@ class VideoProcessingService:
         self._active_tracks.clear()
         self._lost_tracks.clear()
         self._fallback_id = 5000
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
 

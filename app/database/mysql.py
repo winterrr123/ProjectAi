@@ -18,6 +18,7 @@ connect_args = {"check_same_thread": False} if is_sqlite else {}
 engine_kwargs = {"echo": False, "future": True}
 if not is_sqlite:
     engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_recycle"] = 3600
 
 engine = create_engine(
     settings.DATABASE_URL,
@@ -32,6 +33,7 @@ def init_db() -> None:
     try:
         from app.models.detection import DetectionResult, DetectionSession, ProductCount  # noqa: F401
         from app.models.product import Product  # noqa: F401
+        from app.models.sample import SampleProduct  # noqa: F401
         from app.models.user import User  # noqa: F401
         from sqlalchemy import inspect, text
 
